@@ -1,0 +1,8 @@
+/target
+*.img
+*.iso
+*.efi
+*.o
+*.log
+.DS_Store
+.vscode/
