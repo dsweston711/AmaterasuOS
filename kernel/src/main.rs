@@ -1,24 +1,25 @@
 #![no_std]
 #![no_main]
 
+mod serial;
+
 use bootloader_api::{entry_point, BootInfo};
 use core::panic::PanicInfo;
 
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    // Grab the framebuffer the bootloader set up for us.
+    serial::SERIAL1.lock().init();
+    serial_println!("AmaterasuOS booting...");
+
     if let Some(framebuffer) = boot_info.framebuffer.as_mut() {
         let info = framebuffer.info();
         let buffer = framebuffer.buffer_mut();
 
-        // Paint the whole screen a color (RGB-ish, depends on pixel format).
-        // For now, just fill with a solid value so we know we're alive.
         for byte in buffer.iter_mut() {
-            *byte = 0x90; // mid-gray-ish
+            *byte = 0x90;
         }
 
-        // Poke a bright rectangle in the top-left so we know writes work.
         let stride = info.stride;
         let bytes_per_pixel = info.bytes_per_pixel;
         for y in 10..60 {
@@ -33,14 +34,18 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         }
     }
 
+    serial_println!("Framebuffer initialized.");
+
     loop {
-        // Halt the CPU until the next interrupt. Saves power, doesn't spin.
         unsafe { core::arch::asm!("hlt"); }
     }
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
+fn panic(info: &PanicInfo) -> ! {
+    // Force-unlock in case we panicked while holding the serial lock.
+    unsafe { serial::SERIAL1.force_unlock(); }
+    serial_println!("KERNEL PANIC: {}", info);
     loop {
         unsafe { core::arch::asm!("hlt"); }
     }
