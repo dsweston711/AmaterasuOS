@@ -1,4 +1,6 @@
 use bootloader_api::info::FrameBufferInfo;
+use core::fmt;
+use spin::Mutex;
 
 pub const GLYPH_W: usize = 8;
 pub const GLYPH_H: usize = 8;
@@ -200,6 +202,134 @@ static FONT: [[u8; GLYPH_H]; 96] = [
     // 0x7F DEL (solid block as placeholder)
     [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
 ];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WRITER — global framebuffer text state, locked behind a Mutex<Option<_>>.
+//   None until init() is called with the bootloader framebuffer.
+//   Initialized exactly once at kernel startup; never re-initialized.
+// ══════════════════════════════════════════════════════════════════════════════
+
+pub static WRITER: Mutex<Option<FramebufferWriter>> = Mutex::new(None);
+
+pub struct FramebufferWriter {
+    buffer: &'static mut [u8],
+    info: FrameBufferInfo,
+    col: usize, // cursor column in glyph-grid units
+    row: usize, // cursor row    in glyph-grid units
+    fg: [u8; 3],
+    bg: [u8; 3],
+}
+
+impl FramebufferWriter {
+    pub fn new(buffer: &'static mut [u8], info: FrameBufferInfo) -> Self {
+        Self {
+            buffer,
+            info,
+            col: 0,
+            row: 0,
+            fg: [0xFF, 0xFF, 0xFF],
+            bg: [0x00, 0x00, 0x00],
+        }
+    }
+
+    fn cols(&self) -> usize {
+        self.info.width / GLYPH_W
+    }
+
+    fn rows(&self) -> usize {
+        self.info.height / GLYPH_H
+    }
+
+    // Shift every glyph row up by one, erase the vacated bottom row.
+    // One stride-row of pixels = stride * bytes_per_pixel bytes.
+    // One glyph row = GLYPH_H of those, contiguous in the flat buffer.
+    fn scroll_up(&mut self) {
+        let row_bytes = self.info.stride * self.info.bytes_per_pixel * GLYPH_H;
+        self.buffer.copy_within(row_bytes.., 0);
+        let blank_start = self.buffer.len() - row_bytes;
+        let bpp = self.info.bytes_per_pixel;
+        let bg = self.bg;
+        for chunk in self.buffer[blank_start..].chunks_mut(bpp) {
+            chunk[0] = bg[2]; // B
+            chunk[1] = bg[1]; // G
+            chunk[2] = bg[0]; // R
+            if bpp == 4 {
+                chunk[3] = 0xFF;
+            }
+        }
+    }
+
+    pub fn write_char(&mut self, ch: char) {
+        match ch {
+            '\n' => {
+                self.col = 0;
+                self.row += 1;
+            }
+            _ => {
+                write_glyph(
+                    self.buffer,
+                    &self.info,
+                    ch,
+                    self.col * GLYPH_W,
+                    self.row * GLYPH_H,
+                    self.fg,
+                    self.bg,
+                );
+                self.col += 1;
+                if self.col >= self.cols() {
+                    self.col = 0;
+                    self.row += 1;
+                }
+            }
+        }
+        // Scroll once per overflow, keeping row pinned to the last line.
+        if self.row >= self.rows() {
+            self.scroll_up();
+            self.row = self.rows() - 1;
+        }
+    }
+}
+
+impl fmt::Write for FramebufferWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for ch in s.chars() {
+            self.write_char(ch);
+        }
+        Ok(())
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MACROS — print! / println! targeting the framebuffer WRITER.
+//   Mirrors the serial_print! / serial_println! interface exactly.
+//   Silently no-ops if the writer has not been initialized yet.
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    use fmt::Write;
+    if let Some(w) = WRITER.lock().as_mut() {
+        let _ = w.write_fmt(args);
+    }
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::framebuffer::_print(format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($fmt:expr) => ($crate::print!(concat!($fmt, "\n")));
+    ($fmt:expr, $($arg:tt)*) => ($crate::print!(concat!($fmt, "\n"), $($arg)*));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GLYPH BLITTER — low-level pixel writer; no cursor state, no side effects.
+// ══════════════════════════════════════════════════════════════════════════════
 
 /// Write a single 8×8 glyph for `ch` at pixel position `(px, py)`.
 /// `fg` / `bg` are `[r, g, b]` colours; alpha/padding byte is written as 0xFF.
