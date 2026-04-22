@@ -237,19 +237,27 @@ impl FramebufferWriter {
     }
 
     pub fn write_char(&mut self, ch: char) {
-        write_glyph(
-            self.buffer,
-            &self.info,
-            ch,
-            self.col * GLYPH_W,
-            self.row * GLYPH_H,
-            self.fg,
-            self.bg,
-        );
-        self.col += 1;
-        if self.col >= self.cols() {
-            self.col = 0;
-            self.row += 1;
+        match ch {
+            '\n' => {
+                self.col = 0;
+                self.row += 1;
+            }
+            _ => {
+                write_glyph(
+                    self.buffer,
+                    &self.info,
+                    ch,
+                    self.col * GLYPH_W,
+                    self.row * GLYPH_H,
+                    self.fg,
+                    self.bg,
+                );
+                self.col += 1;
+                if self.col >= self.cols() {
+                    self.col = 0;
+                    self.row += 1;
+                }
+            }
         }
     }
 }
