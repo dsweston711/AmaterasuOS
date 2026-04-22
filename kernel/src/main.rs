@@ -25,10 +25,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             Some(framebuffer::FramebufferWriter::new(buffer, info));
     }
 
-    use core::fmt::Write;
-    if let Some(w) = framebuffer::WRITER.lock().as_mut() {
-        let _ = write!(w, "AmaterasuOS\nbooting...");
-    }
+    println!("AmaterasuOS");
+    println!("booting...");
 
     serial_println!("Framebuffer initialized.");
 

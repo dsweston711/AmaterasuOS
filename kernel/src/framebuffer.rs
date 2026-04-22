@@ -300,6 +300,34 @@ impl fmt::Write for FramebufferWriter {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// MACROS — print! / println! targeting the framebuffer WRITER.
+//   Mirrors the serial_print! / serial_println! interface exactly.
+//   Silently no-ops if the writer has not been initialized yet.
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[doc(hidden)]
+pub fn _print(args: fmt::Arguments) {
+    use fmt::Write;
+    if let Some(w) = WRITER.lock().as_mut() {
+        let _ = w.write_fmt(args);
+    }
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::framebuffer::_print(format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::print!("\n"));
+    ($fmt:expr) => ($crate::print!(concat!($fmt, "\n")));
+    ($fmt:expr, $($arg:tt)*) => ($crate::print!(concat!($fmt, "\n"), $($arg)*));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // GLYPH BLITTER — low-level pixel writer; no cursor state, no side effects.
 // ══════════════════════════════════════════════════════════════════════════════
 
