@@ -1,4 +1,6 @@
 use bootloader_api::info::FrameBufferInfo;
+use core::fmt;
+use spin::Mutex;
 
 pub const GLYPH_W: usize = 8;
 pub const GLYPH_H: usize = 8;
@@ -200,6 +202,70 @@ static FONT: [[u8; GLYPH_H]; 96] = [
     // 0x7F DEL (solid block as placeholder)
     [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
 ];
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WRITER — global framebuffer text state, locked behind a Mutex<Option<_>>.
+//   None until init() is called with the bootloader framebuffer.
+//   Initialized exactly once at kernel startup; never re-initialized.
+// ══════════════════════════════════════════════════════════════════════════════
+
+pub static WRITER: Mutex<Option<FramebufferWriter>> = Mutex::new(None);
+
+pub struct FramebufferWriter {
+    buffer: &'static mut [u8],
+    info: FrameBufferInfo,
+    col: usize, // cursor column in glyph-grid units
+    row: usize, // cursor row    in glyph-grid units
+    fg: [u8; 3],
+    bg: [u8; 3],
+}
+
+impl FramebufferWriter {
+    pub fn new(buffer: &'static mut [u8], info: FrameBufferInfo) -> Self {
+        Self {
+            buffer,
+            info,
+            col: 0,
+            row: 0,
+            fg: [0xFF, 0xFF, 0xFF],
+            bg: [0x00, 0x00, 0x00],
+        }
+    }
+
+    fn cols(&self) -> usize {
+        self.info.width / GLYPH_W
+    }
+
+    pub fn write_char(&mut self, ch: char) {
+        write_glyph(
+            self.buffer,
+            &self.info,
+            ch,
+            self.col * GLYPH_W,
+            self.row * GLYPH_H,
+            self.fg,
+            self.bg,
+        );
+        self.col += 1;
+        if self.col >= self.cols() {
+            self.col = 0;
+            self.row += 1;
+        }
+    }
+}
+
+impl fmt::Write for FramebufferWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for ch in s.chars() {
+            self.write_char(ch);
+        }
+        Ok(())
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// GLYPH BLITTER — low-level pixel writer; no cursor state, no side effects.
+// ══════════════════════════════════════════════════════════════════════════════
 
 /// Write a single 8×8 glyph for `ch` at pixel position `(px, py)`.
 /// `fg` / `bg` are `[r, g, b]` colours; alpha/padding byte is written as 0xFF.

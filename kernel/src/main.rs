@@ -17,24 +17,17 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let info = fb.info();
         let buffer = fb.buffer_mut();
 
-        // Clear to black.
         for byte in buffer.iter_mut() {
             *byte = 0x00;
         }
 
-        // Draw a test string glyph-by-glyph to verify write_glyph works.
-        let msg = "AmaterasuOS";
-        for (i, ch) in msg.chars().enumerate() {
-            framebuffer::write_glyph(
-                buffer,
-                &info,
-                ch,
-                8 + i * framebuffer::GLYPH_W,
-                8,
-                [0xFF, 0xFF, 0xFF], // white fg
-                [0x00, 0x00, 0x00], // black bg
-            );
-        }
+        *framebuffer::WRITER.lock() =
+            Some(framebuffer::FramebufferWriter::new(buffer, info));
+    }
+
+    use core::fmt::Write;
+    if let Some(w) = framebuffer::WRITER.lock().as_mut() {
+        let _ = write!(w, "AmaterasuOS booting...");
     }
 
     serial_println!("Framebuffer initialized.");
