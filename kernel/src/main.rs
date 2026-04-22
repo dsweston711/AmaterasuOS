@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 
+mod framebuffer;
 mod serial;
 
 use bootloader_api::{entry_point, BootInfo};
@@ -12,25 +13,27 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial::SERIAL1.lock().init();
     serial_println!("AmaterasuOS booting...");
 
-    if let Some(framebuffer) = boot_info.framebuffer.as_mut() {
-        let info = framebuffer.info();
-        let buffer = framebuffer.buffer_mut();
+    if let Some(fb) = boot_info.framebuffer.as_mut() {
+        let info = fb.info();
+        let buffer = fb.buffer_mut();
 
+        // Clear to black.
         for byte in buffer.iter_mut() {
-            *byte = 0x90;
+            *byte = 0x00;
         }
 
-        let stride = info.stride;
-        let bytes_per_pixel = info.bytes_per_pixel;
-        for y in 10..60 {
-            for x in 10..200 {
-                let offset = (y * stride + x) * bytes_per_pixel;
-                if offset + bytes_per_pixel <= buffer.len() {
-                    buffer[offset] = 0xFF;
-                    buffer[offset + 1] = 0xFF;
-                    buffer[offset + 2] = 0xFF;
-                }
-            }
+        // Draw a test string glyph-by-glyph to verify write_glyph works.
+        let msg = "AmaterasuOS";
+        for (i, ch) in msg.chars().enumerate() {
+            framebuffer::write_glyph(
+                buffer,
+                &info,
+                ch,
+                8 + i * framebuffer::GLYPH_W,
+                8,
+                [0xFF, 0xFF, 0xFF], // white fg
+                [0x00, 0x00, 0x00], // black bg
+            );
         }
     }
 
