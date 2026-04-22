@@ -236,6 +236,29 @@ impl FramebufferWriter {
         self.info.width / GLYPH_W
     }
 
+    fn rows(&self) -> usize {
+        self.info.height / GLYPH_H
+    }
+
+    // Shift every glyph row up by one, erase the vacated bottom row.
+    // One stride-row of pixels = stride * bytes_per_pixel bytes.
+    // One glyph row = GLYPH_H of those, contiguous in the flat buffer.
+    fn scroll_up(&mut self) {
+        let row_bytes = self.info.stride * self.info.bytes_per_pixel * GLYPH_H;
+        self.buffer.copy_within(row_bytes.., 0);
+        let blank_start = self.buffer.len() - row_bytes;
+        let bpp = self.info.bytes_per_pixel;
+        let bg = self.bg;
+        for chunk in self.buffer[blank_start..].chunks_mut(bpp) {
+            chunk[0] = bg[2]; // B
+            chunk[1] = bg[1]; // G
+            chunk[2] = bg[0]; // R
+            if bpp == 4 {
+                chunk[3] = 0xFF;
+            }
+        }
+    }
+
     pub fn write_char(&mut self, ch: char) {
         match ch {
             '\n' => {
@@ -258,6 +281,11 @@ impl FramebufferWriter {
                     self.row += 1;
                 }
             }
+        }
+        // Scroll once per overflow, keeping row pinned to the last line.
+        if self.row >= self.rows() {
+            self.scroll_up();
+            self.row = self.rows() - 1;
         }
     }
 }
