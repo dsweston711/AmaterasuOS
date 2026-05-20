@@ -1,7 +1,10 @@
 #![no_std]
 #![no_main]
+#![feature(abi_x86_interrupt)]
 
 mod framebuffer;
+mod idt;
+mod keyboard;
 mod pic;
 mod serial;
 mod time;
@@ -19,6 +22,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_println!("AmaterasuOS booting...");
     serial_println!("[BOOT] t0={} (baseline)", t0);
     serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
+
+    unsafe { pic::remap(); }
+    unsafe { pic::enable_keyboard_only(); }
+    idt::init();
+    x86_64::instructions::interrupts::enable();
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();

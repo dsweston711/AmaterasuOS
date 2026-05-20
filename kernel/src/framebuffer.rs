@@ -285,6 +285,22 @@ impl FramebufferWriter {
                 self.col = 0;
                 self.row += 1;
             }
+            '\x08' => {
+                // Backspace: erase previous character on the same line.
+                if self.col > 0 {
+                    self.col -= 1;
+                    write_glyph(
+                        self.buffer,
+                        &self.info,
+                        ' ',
+                        self.col * GLYPH_W,
+                        self.row * GLYPH_H,
+                        self.fg,
+                        self.bg,
+                    );
+                }
+                return;
+            }
             _ => {
                 write_glyph(
                     self.buffer,
