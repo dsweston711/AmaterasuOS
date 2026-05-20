@@ -3,6 +3,7 @@
 
 mod framebuffer;
 mod serial;
+mod time;
 
 use bootloader_api::{entry_point, BootInfo};
 use core::panic::PanicInfo;
@@ -10,8 +11,13 @@ use core::panic::PanicInfo;
 entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    let t0 = time::rdtsc();
+
     serial::SERIAL1.lock().init();
+    let t_serial = time::rdtsc();
     serial_println!("AmaterasuOS booting...");
+    serial_println!("[BOOT] t0={} (baseline)", t0);
+    serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
@@ -24,12 +30,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         *framebuffer::WRITER.lock() =
             Some(framebuffer::FramebufferWriter::new(buffer, info));
     }
+    let t_fb = time::rdtsc();
+    serial_println!("[BOOT] framebuffer_init: +{} ns", time::cycles_to_ns(t_fb - t0));
 
     println!("AmaterasuOS");
     println!("booting...");
-    // panic!("test panic - remove me later");
 
-    serial_println!("Framebuffer initialized.");
+    let t_done = time::rdtsc();
+    serial_println!("[BOOT] kernel_ready:     +{} ns (total)", time::cycles_to_ns(t_done - t0));
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
