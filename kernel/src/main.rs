@@ -23,11 +23,6 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_println!("[BOOT] t0={} (baseline)", t0);
     serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
 
-    unsafe { pic::remap(); }
-    unsafe { pic::enable_keyboard_only(); }
-    idt::init();
-    x86_64::instructions::interrupts::enable();
-
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
         let buffer = fb.buffer_mut();
@@ -43,11 +38,16 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_println!("[BOOT] framebuffer_init: +{} ns", time::cycles_to_ns(t_fb - t0));
 
     println!("AmaterasuOS");
-    println!("booting...");
-    // panic!("This is a test");
+
+    unsafe { pic::remap(); }
+    unsafe { pic::enable_keyboard_only(); }
+    idt::init();
+    unsafe { core::arch::asm!("sti"); }
 
     let t_done = time::rdtsc();
     serial_println!("[BOOT] kernel_ready:     +{} ns (total)", time::cycles_to_ns(t_done - t0));
+
+    println!("Ready. Type something:");
 
     loop {
         unsafe { core::arch::asm!("hlt"); }
