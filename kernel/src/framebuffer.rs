@@ -259,6 +259,26 @@ impl FramebufferWriter {
         }
     }
 
+    pub fn set_colors(&mut self, fg: [u8; 3], bg: [u8; 3]) {
+        self.fg = fg;
+        self.bg = bg;
+    }
+
+    pub fn clear(&mut self) {
+        let bpp = self.info.bytes_per_pixel;
+        let bg = self.bg;
+        for chunk in self.buffer.chunks_mut(bpp) {
+            chunk[0] = bg[2]; // B
+            chunk[1] = bg[1]; // G
+            chunk[2] = bg[0]; // R
+            if bpp == 4 {
+                chunk[3] = 0xFF;
+            }
+        }
+        self.col = 0;
+        self.row = 0;
+    }
+
     pub fn write_char(&mut self, ch: char) {
         match ch {
             '\n' => {
