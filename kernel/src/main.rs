@@ -2,6 +2,7 @@
 #![no_main]
 
 mod framebuffer;
+mod pic;
 mod serial;
 mod time;
 
