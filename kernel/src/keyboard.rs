@@ -1,6 +1,7 @@
+use spin::Mutex;
 use x86_64::structures::idt::InterruptStackFrame;
 
-// US QWERTY scancode set 1 make-code -> ASCII byte. 0x00 = no mapping.
+// US QWERTY scancode set 1 — unshifted make-codes. 0x00 = no mapping.
 #[rustfmt::skip]
 static MAP: [u8; 58] = [
     0,      // 0x00
@@ -63,8 +64,86 @@ static MAP: [u8; 58] = [
     b' ',   // 0x39 Space
 ];
 
-pub fn scancode_to_char(scancode: u8) -> Option<char> {
-    let b = *MAP.get(scancode as usize)?;
+// Shifted equivalents, parallel to MAP.
+#[rustfmt::skip]
+static SHIFT_MAP: [u8; 58] = [
+    0,      // 0x00
+    0,      // 0x01 Escape
+    b'!',   // 0x02
+    b'@',   // 0x03
+    b'#',   // 0x04
+    b'$',   // 0x05
+    b'%',   // 0x06
+    b'^',   // 0x07
+    b'&',   // 0x08
+    b'*',   // 0x09
+    b'(',   // 0x0A
+    b')',   // 0x0B
+    b'_',   // 0x0C
+    b'+',   // 0x0D
+    0x08,   // 0x0E Backspace
+    b'\t',  // 0x0F Tab
+    b'Q',   // 0x10
+    b'W',   // 0x11
+    b'E',   // 0x12
+    b'R',   // 0x13
+    b'T',   // 0x14
+    b'Y',   // 0x15
+    b'U',   // 0x16
+    b'I',   // 0x17
+    b'O',   // 0x18
+    b'P',   // 0x19
+    b'{',   // 0x1A
+    b'}',   // 0x1B
+    b'\n',  // 0x1C Enter
+    0,      // 0x1D Left Ctrl
+    b'A',   // 0x1E
+    b'S',   // 0x1F
+    b'D',   // 0x20
+    b'F',   // 0x21
+    b'G',   // 0x22
+    b'H',   // 0x23
+    b'J',   // 0x24
+    b'K',   // 0x25
+    b'L',   // 0x26
+    b':',   // 0x27
+    b'"',   // 0x28
+    b'~',   // 0x29
+    0,      // 0x2A Left Shift
+    b'|',   // 0x2B
+    b'Z',   // 0x2C
+    b'X',   // 0x2D
+    b'C',   // 0x2E
+    b'V',   // 0x2F
+    b'B',   // 0x30
+    b'N',   // 0x31
+    b'M',   // 0x32
+    b'<',   // 0x33
+    b'>',   // 0x34
+    b'?',   // 0x35
+    0,      // 0x36 Right Shift
+    b'*',   // 0x37 Keypad *
+    0,      // 0x38 Left Alt
+    b' ',   // 0x39 Space
+];
+
+struct Modifiers {
+    shift: bool,
+    caps_lock: bool,
+}
+
+static MODIFIERS: Mutex<Modifiers> = Mutex::new(Modifiers { shift: false, caps_lock: false });
+
+// Letter scancodes: Q-P row, A-L row, Z-M row.
+fn is_letter(scancode: u8) -> bool {
+    matches!(scancode, 0x10..=0x19 | 0x1E..=0x26 | 0x2C..=0x32)
+}
+
+pub fn scancode_to_char(scancode: u8, shift: bool, caps_lock: bool) -> Option<char> {
+    // Caps lock inverts shift for letters only; symbols always follow shift state.
+    let use_shift = if is_letter(scancode) { shift ^ caps_lock } else { shift };
+    let map = if use_shift { &SHIFT_MAP } else { &MAP };
+    let b = *map.get(scancode as usize)?;
     if b == 0 { None } else { Some(b as char) }
 }
 
@@ -73,12 +152,22 @@ pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
         let scancode = crate::pic::inb(0x60);
         crate::pic::end_of_interrupt(1);
 
-        // Ignore key-release events (bit 7 set)
-        if scancode & 0x80 != 0 {
-            return;
+        // Handle modifier make/break codes before anything else.
+        match scancode {
+            0x2A | 0x36 => { MODIFIERS.lock().shift = true;  return; } // L/R shift press
+            0xAA | 0xB6 => { MODIFIERS.lock().shift = false; return; } // L/R shift release
+            0x3A        => { let mut m = MODIFIERS.lock(); m.caps_lock ^= true; return; }
+            sc if sc & 0x80 != 0 => return, // all other break codes
+            _ => {}
         }
 
-        if let Some(ch) = scancode_to_char(scancode) {
+        // Read modifier state and release the lock before touching the shell.
+        let ch = {
+            let m = MODIFIERS.lock();
+            scancode_to_char(scancode, m.shift, m.caps_lock)
+        };
+
+        if let Some(ch) = ch {
             crate::shell::SHELL.lock().push_char(ch);
         }
     }
