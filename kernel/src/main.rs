@@ -35,6 +35,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("AmaterasuOS");
     println!("booting...");
+    // panic!("This is a test");
 
     let t_done = time::rdtsc();
     serial_println!("[BOOT] kernel_ready:     +{} ns (total)", time::cycles_to_ns(t_done - t0));
