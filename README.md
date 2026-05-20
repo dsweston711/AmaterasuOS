@@ -4,19 +4,26 @@ An operating system written in Rust, optimized for boot time.
 
 **Goal:** Power button to usable shell in under 3 seconds on modern x86_64 UEFI hardware.
 
-**Status:** Pre-alpha. Kernel does not yet boot.
+**Status:** Pre-alpha. Kernel boots in QEMU — framebuffer, serial output, and panic handler working.
 
-## Build
+## Requirements
 
-Requires nightly Rust. The `rust-toolchain.toml` file handles this automatically.
+- Nightly Rust (`rust-toolchain.toml` handles this automatically)
+- QEMU: `sudo apt install qemu-system-x86`
+
+## Build & Run
 
 ```
-cargo build
+cargo krun
 ```
 
-## Run
+Builds the kernel, creates a bootable disk image, and launches it in QEMU. Serial output (boot timing, panic info) goes to stdout.
 
-TBD - will use QEMU with OVMF UEFI firmware.
+## Boot time
+
+Current baseline (QEMU, BIOS, debug build): **~364 ms** from kernel entry to ready.
+
+See [docs/boot-time-log.md](docs/boot-time-log.md) for full history and methodology.
 
 ## Specifications
 
