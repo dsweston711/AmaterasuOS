@@ -79,7 +79,7 @@ pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
         }
 
         if let Some(ch) = scancode_to_char(scancode) {
-            crate::print!("{}", ch);
+            crate::shell::SHELL.lock().push_char(ch);
         }
     }
 }

@@ -7,6 +7,7 @@ mod idt;
 mod keyboard;
 mod pic;
 mod serial;
+mod shell;
 mod time;
 
 use bootloader_api::{entry_point, BootInfo};
@@ -47,7 +48,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let t_done = time::rdtsc();
     serial_println!("[BOOT] kernel_ready:     +{} ns (total)", time::cycles_to_ns(t_done - t0));
 
-    println!("Ready. Type something:");
+    shell::prompt();
 
     loop {
         unsafe { core::arch::asm!("hlt"); }

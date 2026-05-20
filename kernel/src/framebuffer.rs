@@ -279,6 +279,19 @@ impl FramebufferWriter {
         self.row = 0;
     }
 
+    pub fn backspace(&mut self) {
+        if self.col > 0 {
+            self.col -= 1;
+        } else if self.row > 0 {
+            self.row -= 1;
+            self.col = self.cols() - 1;
+        } else {
+            return;
+        }
+        write_glyph(self.buffer, &self.info, ' ',
+            self.col * GLYPH_W, self.row * GLYPH_H, self.fg, self.bg);
+    }
+
     pub fn write_char(&mut self, ch: char) {
         match ch {
             '\n' => {
@@ -286,19 +299,7 @@ impl FramebufferWriter {
                 self.row += 1;
             }
             '\x08' => {
-                // Backspace: erase previous character on the same line.
-                if self.col > 0 {
-                    self.col -= 1;
-                    write_glyph(
-                        self.buffer,
-                        &self.info,
-                        ' ',
-                        self.col * GLYPH_W,
-                        self.row * GLYPH_H,
-                        self.fg,
-                        self.bg,
-                    );
-                }
+                self.backspace();
                 return;
             }
             _ => {
