@@ -27,6 +27,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("AmaterasuOS");
     println!("booting...");
+    // panic!("test panic - remove me later");
 
     serial_println!("Framebuffer initialized.");
 
