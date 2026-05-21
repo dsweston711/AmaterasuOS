@@ -117,6 +117,9 @@ impl VNode for RamfsDir {
     fn kind(&self) -> NodeKind { NodeKind::Dir }
     fn size(&self) -> usize    { self.entries.len() }
     fn read(&self, _: &mut [u8], _: usize) -> usize { 0 }
+    fn readdir(&self) -> alloc::vec::Vec<String> {
+        self.entries.iter().map(|(name, _)| name.clone()).collect()
+    }
     fn lookup(&self, name: &str) -> Option<Box<dyn VNode>> {
         self.entries.iter()
             .find(|(n, _)| n == name)
@@ -171,6 +174,7 @@ impl VNode for DirRef {
     fn kind(&self) -> NodeKind { NodeKind::Dir }
     fn size(&self) -> usize    { unsafe { (*self.ptr).size() } }
     fn read(&self, _: &mut [u8], _: usize) -> usize { 0 }
+    fn readdir(&self) -> alloc::vec::Vec<String> { unsafe { (*self.ptr).readdir() } }
     fn lookup(&self, name: &str) -> Option<Box<dyn VNode>> {
         unsafe { (*self.ptr).lookup(name) }
     }

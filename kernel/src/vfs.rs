@@ -1,4 +1,6 @@
 use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
 use spin::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +18,8 @@ pub trait VNode: Send + Sync {
     fn read(&self, buf: &mut [u8], offset: usize) -> usize;
     /// Look up a child by name. Only meaningful for `Dir` nodes.
     fn lookup(&self, name: &str) -> Option<Box<dyn VNode>>;
+    /// Return the names of all direct children. Only meaningful for `Dir` nodes.
+    fn readdir(&self) -> Vec<String> { Vec::new() }
 }
 
 // ── Global VFS root ──────────────────────────────────────────────────────────
