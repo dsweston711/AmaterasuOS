@@ -181,7 +181,7 @@ impl Shell {
     }
 
     fn cmd_ls(&mut self, path: Option<String>) {
-        let resolved = path.map(|p| resolve(&p)).unwrap_or_else(cwd_get);
+        let resolved = path.map(|p| normalize(&resolve(&p))).unwrap_or_else(cwd_get);
         let path_str = resolved.as_str();
         let is_root = path_str.split('/').filter(|s| !s.is_empty()).next().is_none();
 
@@ -215,7 +215,7 @@ impl Shell {
 
     fn cmd_cat(&mut self, arg: Option<String>) {
         let path = match arg {
-            Some(p) => resolve(&p),
+            Some(p) => normalize(&resolve(&p)),
             None    => { crate::println!("usage: cat <path>"); return; }
         };
         match crate::vfs::lookup(&path) {
@@ -242,7 +242,7 @@ impl Shell {
 
     fn cmd_stat(&mut self, arg: Option<String>) {
         let path = match arg {
-            Some(p) => resolve(&p),
+            Some(p) => normalize(&resolve(&p)),
             None    => { crate::println!("usage: stat <path>"); return; }
         };
         match crate::vfs::lookup(&path) {
@@ -264,8 +264,8 @@ impl Shell {
             Some(p) => p,
             None    => { crate::println!("usage: cd <path>"); return; }
         };
-        let resolved = resolve(&path);
-        let is_root = resolved.split('/').filter(|s| !s.is_empty()).next().is_none();
+        let resolved = normalize(&resolve(&path));
+        let is_root = resolved == "/";
         if is_root {
             *CWD.lock() = String::from("/");
             return;
@@ -359,4 +359,25 @@ fn resolve(path: &str) -> String {
     } else {
         alloc::format!("{}/{}", base, path)
     }
+}
+
+/// Collapse `.` and `..` components from an absolute path.
+fn normalize(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for component in path.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => { parts.pop(); }
+            s => parts.push(s),
+        }
+    }
+    if parts.is_empty() {
+        return String::from("/");
+    }
+    let mut out = String::new();
+    for part in &parts {
+        out.push('/');
+        out.push_str(part);
+    }
+    out
 }
