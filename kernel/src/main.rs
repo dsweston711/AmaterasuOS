@@ -34,8 +34,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     serial::SERIAL1.lock().init();
     let t_serial = time::rdtsc();
+    time::calibrate(); // PIT-based TSC calibration (~10 ms); must precede cycles_to_ns
     serial_println!("AmaterasuOS booting...");
     serial_println!("[BOOT] t0={} (baseline)", t0);
+    serial_println!("[BOOT] TSC:              {} MHz", time::tsc_mhz());
     serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
 
     let phys_offset = boot_info.physical_memory_offset
