@@ -1,0 +1,6 @@
+pwd
+
+  Print the current working directory.
+
+  Examples:
+    pwd
