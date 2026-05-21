@@ -16,6 +16,7 @@ mod pic;
 mod serial;
 mod shell;
 mod time;
+mod vfs;
 
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use bootloader_api::config::Mapping;
@@ -51,6 +52,13 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     allocator::init(memory::heap_start_virt(), memory::heap_size());
     let t_alloc = time::rdtsc();
     serial_println!("[BOOT] allocator_init:   +{} ns", time::cycles_to_ns(t_alloc - t0));
+
+    if let Some(rd_phys) = boot_info.ramdisk_addr.into_option() {
+        let rd_len = boot_info.ramdisk_len as usize;
+        serial_println!("[RAMDISK] phys {:#010x}, {} bytes", rd_phys, rd_len);
+    } else {
+        serial_println!("[RAMDISK] not provided");
+    }
 
     if let Some(rsdp_phys) = boot_info.rsdp_addr.into_option() {
         acpi::init(rsdp_phys, phys_offset);
