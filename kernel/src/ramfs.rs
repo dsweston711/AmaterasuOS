@@ -232,7 +232,7 @@ fn parse_ustar(data: &'static [u8]) -> Vec<(String, Node)> {
         if &header[MAGIC_OFF..MAGIC_OFF + MAGIC.len()] != MAGIC { break; }
 
         let name  = str::from_utf8(trim_nul(&header[NAME_OFF..NAME_OFF + NAME_LEN]))
-            .unwrap_or("").trim_matches('/');
+            .unwrap_or("").trim_matches('/').trim_start_matches("./");
         let size  = parse_octal(&header[SIZE_OFF..SIZE_OFF + SIZE_LEN]);
         let ttype = header[TYPE_OFF];
 
