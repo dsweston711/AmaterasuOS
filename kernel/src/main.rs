@@ -5,6 +5,7 @@
 mod framebuffer;
 mod idt;
 mod keyboard;
+mod memory;
 mod pic;
 mod serial;
 mod shell;
@@ -23,6 +24,10 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_println!("AmaterasuOS booting...");
     serial_println!("[BOOT] t0={} (baseline)", t0);
     serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
+
+    memory::init(&boot_info.memory_regions);
+    let t_mem = time::rdtsc();
+    serial_println!("[BOOT] memory_init:      +{} ns", time::cycles_to_ns(t_mem - t0));
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
