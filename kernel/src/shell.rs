@@ -57,6 +57,7 @@ impl Shell {
         match ch {
             '\x08' => self.backspace(),
             '\n'   => self.submit(),
+            '\t'   => self.complete(),
             ch     => {
                 if self.len < BUF_CAP {
                     self.buf[self.len] = ch;
@@ -135,6 +136,67 @@ impl Shell {
 
     fn reprint_buf(&self) {
         for i in 0..self.len { crate::print!("{}", self.buf[i]); }
+    }
+
+    fn complete(&mut self) {
+        let chars = &self.buf[..self.len];
+
+        let cmd_start = match chars.iter().position(|c| !c.is_whitespace()) {
+            Some(i) => i,
+            None    => return,
+        };
+
+        let space_pos = chars[cmd_start..].iter().position(|c| c.is_whitespace())
+            .map(|i| cmd_start + i);
+
+        let (candidates, prefix_len) = match space_pos {
+            None => {
+                // Still typing the command name.
+                let prefix: String = chars[cmd_start..].iter().collect();
+                let matches = COMMANDS.iter()
+                    .filter(|c| c.name.starts_with(prefix.as_str()))
+                    .map(|c| String::from(c.name))
+                    .collect();
+                (matches, chars[cmd_start..].len())
+            }
+            Some(sp) => {
+                let cmd_name: String = chars[cmd_start..sp].iter().collect();
+                let arg_start = chars[sp..].iter().position(|c| !c.is_whitespace())
+                    .map(|i| sp + i)
+                    .unwrap_or(self.len);
+                let arg: String = chars[arg_start..].iter().collect();
+
+                if cmd_name == "help" {
+                    let matches = COMMANDS.iter()
+                        .filter(|c| c.name.starts_with(arg.as_str()))
+                        .map(|c| String::from(c.name))
+                        .collect();
+                    (matches, arg.len())
+                } else {
+                    complete_path(&arg)
+                }
+            }
+        };
+
+        match candidates.len() {
+            0 => {}
+            1 => {
+                for ch in candidates[0][prefix_len..].chars() {
+                    if self.len < BUF_CAP {
+                        self.buf[self.len] = ch;
+                        self.len += 1;
+                        crate::print!("{}", ch);
+                    }
+                }
+            }
+            _ => {
+                crate::print!("\n");
+                for c in &candidates { crate::print!("{}  ", c); }
+                crate::print!("\n");
+                self.print_prompt();
+                self.reprint_buf();
+            }
+        }
     }
 
     fn dispatch(&mut self) {
