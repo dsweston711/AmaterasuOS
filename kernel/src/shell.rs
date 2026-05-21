@@ -57,6 +57,7 @@ impl Shell {
         match ch {
             '\x08' => self.backspace(),
             '\n'   => self.submit(),
+            '\t'   => self.complete(),
             ch     => {
                 if self.len < BUF_CAP {
                     self.buf[self.len] = ch;
@@ -135,6 +136,67 @@ impl Shell {
 
     fn reprint_buf(&self) {
         for i in 0..self.len { crate::print!("{}", self.buf[i]); }
+    }
+
+    fn complete(&mut self) {
+        let chars = &self.buf[..self.len];
+
+        let cmd_start = match chars.iter().position(|c| !c.is_whitespace()) {
+            Some(i) => i,
+            None    => return,
+        };
+
+        let space_pos = chars[cmd_start..].iter().position(|c| c.is_whitespace())
+            .map(|i| cmd_start + i);
+
+        let (candidates, prefix_len) = match space_pos {
+            None => {
+                // Still typing the command name.
+                let prefix: String = chars[cmd_start..].iter().collect();
+                let matches = COMMANDS.iter()
+                    .filter(|c| c.name.starts_with(prefix.as_str()))
+                    .map(|c| String::from(c.name))
+                    .collect();
+                (matches, chars[cmd_start..].len())
+            }
+            Some(sp) => {
+                let cmd_name: String = chars[cmd_start..sp].iter().collect();
+                let arg_start = chars[sp..].iter().position(|c| !c.is_whitespace())
+                    .map(|i| sp + i)
+                    .unwrap_or(self.len);
+                let arg: String = chars[arg_start..].iter().collect();
+
+                if cmd_name == "help" {
+                    let matches = COMMANDS.iter()
+                        .filter(|c| c.name.starts_with(arg.as_str()))
+                        .map(|c| String::from(c.name))
+                        .collect();
+                    (matches, arg.len())
+                } else {
+                    complete_path(&arg)
+                }
+            }
+        };
+
+        match candidates.len() {
+            0 => {}
+            1 => {
+                for ch in candidates[0][prefix_len..].chars() {
+                    if self.len < BUF_CAP {
+                        self.buf[self.len] = ch;
+                        self.len += 1;
+                        crate::print!("{}", ch);
+                    }
+                }
+            }
+            _ => {
+                crate::print!("\n");
+                for c in &candidates { crate::print!("{}  ", c); }
+                crate::print!("\n");
+                self.print_prompt();
+                self.reprint_buf();
+            }
+        }
     }
 
     fn dispatch(&mut self) {
@@ -404,6 +466,49 @@ fn resolve(path: &str) -> String {
     } else {
         alloc::format!("{}/{}", base, path)
     }
+}
+
+/// Given a partial path argument, return (candidates, prefix_len).
+/// Each candidate is a name (with trailing `/` for directories).
+/// prefix_len is how many bytes of the last path component were already typed.
+fn complete_path(partial: &str) -> (Vec<String>, usize) {
+    let (dir_str, prefix) = match partial.rfind('/') {
+        Some(pos) => (&partial[..=pos], &partial[pos + 1..]),
+        None      => ("", partial),
+    };
+
+    let dir_abs = if dir_str.is_empty() {
+        cwd_get()
+    } else {
+        normalize(&resolve(dir_str))
+    };
+
+    let names = if dir_abs == "/" {
+        match crate::vfs::with_root(|n| n.readdir()) {
+            Some(n) => n,
+            None    => return (Vec::new(), prefix.len()),
+        }
+    } else {
+        match crate::vfs::lookup(&dir_abs) {
+            Some(node) if node.kind() == crate::vfs::NodeKind::Dir => node.readdir(),
+            _ => return (Vec::new(), prefix.len()),
+        }
+    };
+
+    let dir_prefix = dir_abs.trim_end_matches('/');
+    let mut candidates: Vec<String> = Vec::new();
+    for name in &names {
+        if name.starts_with(prefix) {
+            let full = alloc::format!("{}/{}", dir_prefix, name);
+            let slash = match crate::vfs::lookup(&full) {
+                Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
+                _ => "",
+            };
+            candidates.push(alloc::format!("{}{}", name, slash));
+        }
+    }
+
+    (candidates, prefix.len())
 }
 
 /// Collapse `.` and `..` components from an absolute path.

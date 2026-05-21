@@ -1,0 +1,19 @@
+Tab completion
+
+  Press Tab at any point to complete the current token.
+
+  Command names:
+    hel<Tab>        completes to 'help'
+    ca<Tab>         completes to 'cat'
+
+  Path arguments:
+    cat /sy<Tab>    completes to 'cat /sys/'
+    ls /sys/<Tab>   lists contents of /sys/
+
+  help arguments:
+    help he<Tab>    completes to 'help heap'
+
+  If there is exactly one match, the token is completed in-place.
+  If there are multiple matches, all candidates are listed and the
+  prompt is redrawn so you can keep typing.
+  If there are no matches, nothing happens.
