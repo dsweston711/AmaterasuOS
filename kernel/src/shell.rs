@@ -350,7 +350,7 @@ impl Shell {
     fn cmd_cd(&mut self, arg: Option<String>) {
         let path = match arg {
             Some(p) => p,
-            None    => { crate::println!("usage: cd <path>"); return; }
+            None    => { *CWD.lock() = String::from("/"); return; }
         };
         let resolved = normalize(&resolve(&path));
         let is_root = resolved == "/";
