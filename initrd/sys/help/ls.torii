@@ -1,0 +1,11 @@
+ls [path]
+
+  List the contents of a directory.
+
+  If no path is given, lists the current working directory.
+  If path resolves to a file, prints the filename.
+
+  Examples:
+    ls
+    ls /etc
+    ls /sys/help

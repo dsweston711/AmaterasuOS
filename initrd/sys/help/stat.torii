@@ -1,0 +1,9 @@
+stat <path>
+
+  Show metadata for a file or directory.
+
+  Displays: path, type (file or directory), and size in bytes.
+
+  Examples:
+    stat /etc/hostname
+    stat /sys

@@ -80,7 +80,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let t_fb = time::rdtsc();
     serial_println!("[BOOT] framebuffer_init: +{} ns", time::cycles_to_ns(t_fb - t0));
 
-    println!("AmaterasuOS");
+    if !shell::print_file("/sys/welcome.torii") {
+        println!("AmaterasuOS");
+    }
 
     unsafe { pic::remap(); } // move PIC vectors to 0x20-0x2F before disabling
     apic::init();            // mask PIC, enable LAPIC + I/O APIC, route keyboard

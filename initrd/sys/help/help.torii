@@ -1,0 +1,11 @@
+help [command]
+
+  Show available commands, or detailed help for a specific command.
+
+  Help text is read from /sys/help.torii (general) or
+  /sys/help/<command>.torii (per-command).
+
+  Examples:
+    help
+    help ls
+    help cd

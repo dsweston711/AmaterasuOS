@@ -1,0 +1,12 @@
+AmaterasuOS -- available commands
+
+  clear              clear the screen
+  ls [path]          list directory contents
+  cat <path>         print file contents
+  stat <path>        show file metadata
+  cd <path>          change working directory
+  uptime             show system uptime
+  heap               show heap allocator statistics
+  help [command]     show this help, or help for a specific command
+
+Type 'help <command>' for detailed usage.

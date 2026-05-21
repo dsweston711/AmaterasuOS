@@ -20,6 +20,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "cat",    run: Shell::cmd_cat    },
     Cmd { name: "stat",   run: Shell::cmd_stat   },
     Cmd { name: "cd",     run: Shell::cmd_cd     },
+    Cmd { name: "help",   run: Shell::cmd_help   },
 ];
 
 pub struct Shell {
@@ -210,6 +211,19 @@ impl Shell {
         }
     }
 
+    fn cmd_help(&mut self, arg: Option<String>) {
+        let path = match &arg {
+            None      => String::from("/sys/help.torii"),
+            Some(cmd) => alloc::format!("/sys/help/{}.torii", cmd),
+        };
+        if !print_file(&path) {
+            match &arg {
+                None      => crate::println!("see /sys/help/ for per-command docs"),
+                Some(cmd) => crate::println!("no help found for {}", cmd),
+            }
+        }
+    }
+
     pub fn print_prompt(&self) {
         let cwd = CWD.lock();
         let display = if cwd.is_empty() { "/" } else { cwd.as_str() };
@@ -237,6 +251,26 @@ fn cmd_arg(chars: &[char]) -> Option<String> {
     let trimmed = &rest[start..];
     let end   = trimmed.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(trimmed.len());
     Some(trimmed[..end].iter().collect())
+}
+
+/// Read a VFS file at `path` and print its UTF-8 content. Returns false if
+/// the file is not found or is a directory.
+pub(crate) fn print_file(path: &str) -> bool {
+    match crate::vfs::lookup(path) {
+        Some(node) if node.kind() == crate::vfs::NodeKind::File => {
+            let size = node.size();
+            if size > 0 {
+                let mut buf = alloc::vec![0u8; size];
+                let n = node.read(&mut buf, 0);
+                if let Ok(s) = core::str::from_utf8(&buf[..n]) {
+                    crate::print!("{}", s);
+                    if !s.ends_with('\n') { crate::print!("\n"); }
+                }
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Return the current working directory, defaulting to "/" if unset.

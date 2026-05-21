@@ -1,0 +1,8 @@
+uptime
+
+  Show how long the system has been running since boot.
+
+  Time is reported in seconds and milliseconds, measured from
+  the LAPIC timer calibrated at kernel startup.
+
+  Usage: uptime

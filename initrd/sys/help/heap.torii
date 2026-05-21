@@ -1,0 +1,9 @@
+heap
+
+  Show kernel heap allocator statistics.
+
+  Displays the heap base address, total size, bump allocator
+  usage, and per-size-class slab occupancy. Runs a live Vec
+  allocation probe to confirm the allocator is operational.
+
+  Usage: heap

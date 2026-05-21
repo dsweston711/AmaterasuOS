@@ -1,0 +1,12 @@
+cd <path>
+
+  Change the current working directory.
+
+  Absolute and relative paths are both accepted. The target must
+  exist and be a directory. The prompt updates to reflect the new
+  working directory.
+
+  Examples:
+    cd /etc
+    cd /sys/help
+    cd /
