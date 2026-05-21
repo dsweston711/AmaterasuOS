@@ -1,0 +1,10 @@
+cpu
+
+  Display processor information via CPUID.
+
+  Prints the CPU vendor string and brand string (model name).
+  If the brand string is not supported by the processor, prints
+  "(not available)" in its place.
+
+  Examples:
+    cpu
