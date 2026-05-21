@@ -23,6 +23,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "cd",     run: Shell::cmd_cd     },
     Cmd { name: "pwd",    run: Shell::cmd_pwd    },
     Cmd { name: "cpu",    run: Shell::cmd_cpu    },
+    Cmd { name: "reboot", run: Shell::cmd_reboot },
     Cmd { name: "help",   run: Shell::cmd_help   },
 ];
 
@@ -294,6 +295,14 @@ impl Shell {
                 crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
                 crate::vfs::NodeKind::Dir  => *CWD.lock() = resolved,
             },
+        }
+    }
+
+    fn cmd_reboot(&mut self, _: Option<String>) {
+        unsafe {
+            // Drain keyboard controller input buffer before pulsing reset.
+            while crate::pic::inb(0x64) & 0x02 != 0 {}
+            crate::pic::outb(0x64, 0xFE);
         }
     }
 
