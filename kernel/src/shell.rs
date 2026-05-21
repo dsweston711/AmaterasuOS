@@ -67,6 +67,8 @@ impl Shell {
             }
         } else if chars_eq(cmd, "heap") {
             self.cmd_heap();
+        } else if chars_eq(cmd, "uptime") {
+            self.cmd_uptime();
         } else {
             crate::print!("unknown command: ");
             for &ch in cmd {
@@ -74,6 +76,11 @@ impl Shell {
             }
             crate::print!("\n");
         }
+    }
+
+    fn cmd_uptime(&self) {
+        let ms = crate::timer::uptime_ms();
+        crate::println!("Uptime: {}s {}ms", ms / 1000, ms % 1000);
     }
 
     fn cmd_heap(&self) {
