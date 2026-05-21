@@ -14,3 +14,4 @@ AmaterasuOS -- available commands
   help [command]     show this help, or help for a specific command
 
 Type 'help <command>' for detailed usage.
+Type 'help tab' for tab completion tips.
