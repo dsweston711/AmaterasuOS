@@ -1,0 +1,7 @@
+reboot
+
+  Restart the machine immediately via the PS/2 keyboard controller
+  reset pulse (port 0x64, command 0xFE).
+
+  Examples:
+    reboot

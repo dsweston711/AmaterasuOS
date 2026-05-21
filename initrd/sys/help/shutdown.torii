@@ -1,0 +1,9 @@
+shutdown
+
+  Power off the machine via ACPI S5 (soft poweroff).
+
+  Note: uses QEMU's fixed PM1a control port (0x604). On real hardware
+  the port address must be read from the ACPI FADT.
+
+  Examples:
+    shutdown
