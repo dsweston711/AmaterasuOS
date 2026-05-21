@@ -13,6 +13,7 @@ mod idt;
 mod keyboard;
 mod memory;
 mod pic;
+mod ramfs;
 mod serial;
 mod shell;
 mod time;
@@ -53,12 +54,9 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let t_alloc = time::rdtsc();
     serial_println!("[BOOT] allocator_init:   +{} ns", time::cycles_to_ns(t_alloc - t0));
 
-    if let Some(rd_phys) = boot_info.ramdisk_addr.into_option() {
-        let rd_len = boot_info.ramdisk_len as usize;
-        serial_println!("[RAMDISK] phys {:#010x}, {} bytes", rd_phys, rd_len);
-    } else {
-        serial_println!("[RAMDISK] not provided");
-    }
+    let rd_addr = boot_info.ramdisk_addr.into_option().unwrap_or(0);
+    let rd_len  = boot_info.ramdisk_len as usize;
+    ramfs::init(rd_addr, rd_len, phys_offset);
 
     if let Some(rsdp_phys) = boot_info.rsdp_addr.into_option() {
         acpi::init(rsdp_phys, phys_offset);
