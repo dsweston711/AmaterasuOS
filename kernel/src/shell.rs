@@ -406,6 +406,49 @@ fn resolve(path: &str) -> String {
     }
 }
 
+/// Given a partial path argument, return (candidates, prefix_len).
+/// Each candidate is a name (with trailing `/` for directories).
+/// prefix_len is how many bytes of the last path component were already typed.
+fn complete_path(partial: &str) -> (Vec<String>, usize) {
+    let (dir_str, prefix) = match partial.rfind('/') {
+        Some(pos) => (&partial[..=pos], &partial[pos + 1..]),
+        None      => ("", partial),
+    };
+
+    let dir_abs = if dir_str.is_empty() {
+        cwd_get()
+    } else {
+        normalize(&resolve(dir_str))
+    };
+
+    let names = if dir_abs == "/" {
+        match crate::vfs::with_root(|n| n.readdir()) {
+            Some(n) => n,
+            None    => return (Vec::new(), prefix.len()),
+        }
+    } else {
+        match crate::vfs::lookup(&dir_abs) {
+            Some(node) if node.kind() == crate::vfs::NodeKind::Dir => node.readdir(),
+            _ => return (Vec::new(), prefix.len()),
+        }
+    };
+
+    let dir_prefix = dir_abs.trim_end_matches('/');
+    let mut candidates: Vec<String> = Vec::new();
+    for name in &names {
+        if name.starts_with(prefix) {
+            let full = alloc::format!("{}/{}", dir_prefix, name);
+            let slash = match crate::vfs::lookup(&full) {
+                Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
+                _ => "",
+            };
+            candidates.push(alloc::format!("{}{}", name, slash));
+        }
+    }
+
+    (candidates, prefix.len())
+}
+
 /// Collapse `.` and `..` components from an absolute path.
 fn normalize(path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
