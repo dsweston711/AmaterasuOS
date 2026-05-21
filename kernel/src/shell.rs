@@ -5,6 +5,7 @@ use spin::Mutex;
 const BUF_CAP: usize = 256;
 
 pub static SHELL: Mutex<Shell> = Mutex::new(Shell::new());
+static CWD: Mutex<String>      = Mutex::new(String::new());
 
 struct Cmd {
     name: &'static str,
@@ -18,6 +19,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "ls",     run: Shell::cmd_ls     },
     Cmd { name: "cat",    run: Shell::cmd_cat    },
     Cmd { name: "stat",   run: Shell::cmd_stat   },
+    Cmd { name: "cd",     run: Shell::cmd_cd     },
 ];
 
 pub struct Shell {
@@ -110,7 +112,8 @@ impl Shell {
     }
 
     fn cmd_ls(&mut self, path: Option<String>) {
-        let path_str: &str = path.as_deref().unwrap_or("/");
+        let resolved = path.map(|p| resolve(&p)).unwrap_or_else(cwd_get);
+        let path_str = resolved.as_str();
         let is_root = path_str.split('/').filter(|s| !s.is_empty()).next().is_none();
 
         if is_root {
@@ -143,7 +146,7 @@ impl Shell {
 
     fn cmd_cat(&mut self, arg: Option<String>) {
         let path = match arg {
-            Some(p) => p,
+            Some(p) => resolve(&p),
             None    => { crate::println!("usage: cat <path>"); return; }
         };
         match crate::vfs::lookup(&path) {
@@ -170,7 +173,7 @@ impl Shell {
 
     fn cmd_stat(&mut self, arg: Option<String>) {
         let path = match arg {
-            Some(p) => p,
+            Some(p) => resolve(&p),
             None    => { crate::println!("usage: stat <path>"); return; }
         };
         match crate::vfs::lookup(&path) {
@@ -187,8 +190,30 @@ impl Shell {
         }
     }
 
+    fn cmd_cd(&mut self, arg: Option<String>) {
+        let path = match arg {
+            Some(p) => p,
+            None    => { crate::println!("usage: cd <path>"); return; }
+        };
+        let resolved = resolve(&path);
+        let is_root = resolved.split('/').filter(|s| !s.is_empty()).next().is_none();
+        if is_root {
+            *CWD.lock() = String::from("/");
+            return;
+        }
+        match crate::vfs::lookup(&resolved) {
+            None       => crate::println!("cd: not found: {}", path),
+            Some(node) => match node.kind() {
+                crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
+                crate::vfs::NodeKind::Dir  => *CWD.lock() = resolved,
+            },
+        }
+    }
+
     pub fn print_prompt(&self) {
-        crate::print!("> ");
+        let cwd = CWD.lock();
+        let display = if cwd.is_empty() { "/" } else { cwd.as_str() };
+        crate::print!("amaterasu:{}> ", display);
     }
 }
 
@@ -212,4 +237,24 @@ fn cmd_arg(chars: &[char]) -> Option<String> {
     let trimmed = &rest[start..];
     let end   = trimmed.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(trimmed.len());
     Some(trimmed[..end].iter().collect())
+}
+
+/// Return the current working directory, defaulting to "/" if unset.
+fn cwd_get() -> String {
+    let cwd = CWD.lock();
+    if cwd.is_empty() { String::from("/") } else { cwd.clone() }
+}
+
+/// Resolve `path` to an absolute path against the current CWD.
+/// Paths that already start with '/' are returned as-is.
+fn resolve(path: &str) -> String {
+    if path.starts_with('/') {
+        return String::from(path);
+    }
+    let base = cwd_get();
+    if base.ends_with('/') {
+        alloc::format!("{}{}", base, path)
+    } else {
+        alloc::format!("{}/{}", base, path)
+    }
 }
