@@ -6,7 +6,8 @@ const BUF_CAP:  usize = 256;
 const HIST_CAP: usize = 16;
 
 pub static SHELL: Mutex<Shell> = Mutex::new(Shell::new());
-static CWD: Mutex<String>      = Mutex::new(String::new());
+static CWD:      Mutex<String> = Mutex::new(String::new());
+static PREV_CWD: Mutex<String> = Mutex::new(String::new());
 
 struct Cmd {
     name: &'static str,
@@ -350,19 +351,24 @@ impl Shell {
     fn cmd_cd(&mut self, arg: Option<String>) {
         let path = match arg {
             Some(p) => p,
-            None    => { *CWD.lock() = String::from("/"); return; }
+            None    => { cwd_set(String::from("/")); return; }
         };
+        if path == "-" {
+            let prev = { PREV_CWD.lock().clone() };
+            let dest = if prev.is_empty() { String::from("/") } else { prev };
+            cwd_set(dest);
+            return;
+        }
         let resolved = normalize(&resolve(&path));
-        let is_root = resolved == "/";
-        if is_root {
-            *CWD.lock() = String::from("/");
+        if resolved == "/" {
+            cwd_set(String::from("/"));
             return;
         }
         match crate::vfs::lookup(&resolved) {
             None       => crate::println!("cd: not found: {}", path),
             Some(node) => match node.kind() {
                 crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
-                crate::vfs::NodeKind::Dir  => *CWD.lock() = resolved,
+                crate::vfs::NodeKind::Dir  => cwd_set(resolved),
             },
         }
     }
@@ -458,6 +464,12 @@ pub(crate) fn print_file(path: &str) -> bool {
 fn cwd_get() -> String {
     let cwd = CWD.lock();
     if cwd.is_empty() { String::from("/") } else { cwd.clone() }
+}
+
+/// Set CWD to `new`, saving the previous value in PREV_CWD.
+fn cwd_set(new: String) {
+    let old = core::mem::replace(&mut *CWD.lock(), new);
+    *PREV_CWD.lock() = old;
 }
 
 /// Resolve `path` to an absolute path against the current CWD.
