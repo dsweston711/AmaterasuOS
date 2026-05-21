@@ -5,8 +5,12 @@ AmaterasuOS -- available commands
   cat <path>         print file contents
   stat <path>        show file metadata
   cd <path>          change working directory
+  pwd                print current working directory
+  cpu                show CPU vendor and brand string
   uptime             show system uptime
   heap               show heap allocator statistics
+  reboot             restart the machine
+  shutdown           power off the machine
   help [command]     show this help, or help for a specific command
 
 Type 'help <command>' for detailed usage.
