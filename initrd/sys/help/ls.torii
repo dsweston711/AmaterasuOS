@@ -1,6 +1,7 @@
 ls [path]
 
-  List the contents of a directory.
+  List the contents of a directory. Directories are shown with a
+  trailing / to distinguish them from files.
 
   If no path is given, lists the current working directory.
   If path resolves to a file, prints the filename.

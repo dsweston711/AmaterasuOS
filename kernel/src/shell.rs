@@ -188,9 +188,18 @@ impl Shell {
 
         if is_root {
             match crate::vfs::with_root(|n| n.readdir()) {
-                None                                    => crate::println!("ls: no filesystem mounted"),
-                Some(names) if names.is_empty()         => crate::println!("(empty)"),
-                Some(names)                             => { for name in &names { crate::println!("{}", name); } }
+                None                            => crate::println!("ls: no filesystem mounted"),
+                Some(names) if names.is_empty() => crate::println!("(empty)"),
+                Some(names)                     => {
+                    for name in &names {
+                        let full = alloc::format!("/{}", name);
+                        let suffix = match crate::vfs::lookup(&full) {
+                            Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
+                            _ => "",
+                        };
+                        crate::println!("{}{}", name, suffix);
+                    }
+                }
             }
             return;
         }
@@ -203,7 +212,14 @@ impl Shell {
                     if names.is_empty() {
                         crate::println!("(empty)");
                     } else {
-                        for name in &names { crate::println!("{}", name); }
+                        for name in &names {
+                            let full = alloc::format!("{}/{}", path_str, name);
+                            let suffix = match crate::vfs::lookup(&full) {
+                                Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
+                                _ => "",
+                            };
+                            crate::println!("{}{}", name, suffix);
+                        }
                     }
                 }
                 crate::vfs::NodeKind::File => {
