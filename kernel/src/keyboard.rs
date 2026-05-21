@@ -1,5 +1,8 @@
+use core::sync::atomic::{AtomicBool, Ordering};
 use spin::Mutex;
 use x86_64::structures::idt::InterruptStackFrame;
+
+static EXTENDED: AtomicBool = AtomicBool::new(false);
 
 // US QWERTY scancode set 1 — unshifted make-codes. 0x00 = no mapping.
 #[rustfmt::skip]
@@ -151,6 +154,24 @@ pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
     unsafe {
         let scancode = crate::pic::inb(0x60);
         crate::apic::end_of_interrupt();
+
+        // 0xE0 prefix marks an extended two-byte sequence. Bit 7 is set so it
+        // would be swallowed by the break-code filter below — handle it first.
+        if scancode == 0xE0 {
+            EXTENDED.store(true, Ordering::Relaxed);
+            return;
+        }
+
+        // Drain the extended flag before any further filtering.
+        let extended = EXTENDED.swap(false, Ordering::Relaxed);
+        if extended {
+            match scancode {
+                0x48 => { crate::shell::SHELL.lock().history_up(); }
+                0x50 => { crate::shell::SHELL.lock().history_down(); }
+                _ => {}  // other extended codes (Left, Right, breaks) ignored
+            }
+            return;
+        }
 
         // Handle modifier make/break codes before anything else.
         match scancode {

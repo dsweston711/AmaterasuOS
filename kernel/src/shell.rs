@@ -2,7 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use spin::Mutex;
 
-const BUF_CAP: usize = 256;
+const BUF_CAP:  usize = 256;
+const HIST_CAP: usize = 16;
 
 pub static SHELL: Mutex<Shell> = Mutex::new(Shell::new());
 static CWD: Mutex<String>      = Mutex::new(String::new());
@@ -24,15 +25,27 @@ static COMMANDS: &[Cmd] = &[
 ];
 
 pub struct Shell {
-    buf: [char; BUF_CAP],
-    len: usize,
+    buf:         [char; BUF_CAP],
+    len:         usize,
+    history:     [[char; BUF_CAP]; HIST_CAP],
+    hist_len:    [usize; HIST_CAP],
+    hist_count:  usize,
+    hist_cursor: usize,
+    live_buf:    [char; BUF_CAP],
+    live_len:    usize,
 }
 
 impl Shell {
     pub const fn new() -> Self {
         Self {
-            buf: ['\0'; BUF_CAP],
-            len: 0,
+            buf:         ['\0'; BUF_CAP],
+            len:         0,
+            history:     [['\0'; BUF_CAP]; HIST_CAP],
+            hist_len:    [0; HIST_CAP],
+            hist_count:  0,
+            hist_cursor: 0,
+            live_buf:    ['\0'; BUF_CAP],
+            live_len:    0,
         }
     }
 
@@ -60,9 +73,64 @@ impl Shell {
 
     fn submit(&mut self) {
         crate::print!("\n");
+        if self.len > 0 {
+            let slot = self.hist_count % HIST_CAP;
+            self.history[slot][..self.len].copy_from_slice(&self.buf[..self.len]);
+            self.hist_len[slot] = self.len;
+            self.hist_count += 1;
+        }
+        self.hist_cursor = 0;
         self.dispatch();
         self.len = 0;
         self.print_prompt();
+    }
+
+    pub fn history_up(&mut self) {
+        let available = self.hist_count.min(HIST_CAP);
+        if self.hist_cursor >= available { return; }
+        if self.hist_cursor == 0 {
+            self.live_buf[..self.len].copy_from_slice(&self.buf[..self.len]);
+            self.live_len = self.len;
+        }
+        self.hist_cursor += 1;
+        self.load_history_entry();
+    }
+
+    pub fn history_down(&mut self) {
+        if self.hist_cursor == 0 { return; }
+        self.hist_cursor -= 1;
+        if self.hist_cursor == 0 {
+            self.load_live();
+        } else {
+            self.load_history_entry();
+        }
+    }
+
+    fn load_history_entry(&mut self) {
+        let idx = (self.hist_count - self.hist_cursor) % HIST_CAP;
+        let new_len = self.hist_len[idx];
+        self.erase_line();
+        self.buf[..new_len].copy_from_slice(&self.history[idx][..new_len]);
+        self.len = new_len;
+        self.reprint_buf();
+    }
+
+    fn load_live(&mut self) {
+        self.erase_line();
+        self.buf[..self.live_len].copy_from_slice(&self.live_buf[..self.live_len]);
+        self.len = self.live_len;
+        self.reprint_buf();
+    }
+
+    fn erase_line(&mut self) {
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            for _ in 0..self.len { w.backspace(); }
+        }
+        self.len = 0;
+    }
+
+    fn reprint_buf(&self) {
+        for i in 0..self.len { crate::print!("{}", self.buf[i]); }
     }
 
     fn dispatch(&mut self) {
