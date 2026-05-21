@@ -7,6 +7,7 @@ extern crate alloc;
 mod acpi;
 mod allocator;
 mod apic;
+mod timer;
 mod framebuffer;
 mod idt;
 mod keyboard;
@@ -81,6 +82,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     idt::init();
     unsafe { core::arch::asm!("sti"); }
 
+    timer::init(); // calibrate LAPIC timer and start 1 ms periodic IRQ
     let t_done = time::rdtsc();
     serial_println!("[BOOT] kernel_ready:     +{} ns (total)", time::cycles_to_ns(t_done - t0));
 

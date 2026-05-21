@@ -16,12 +16,12 @@ static LAPIC_BASE: AtomicUsize = AtomicUsize::new(0);
 
 // ── LAPIC MMIO helpers ───────────────────────────────────────────────────────
 
-unsafe fn lapic_write(offset: u32, val: u32) {
+pub(crate) unsafe fn lapic_write(offset: u32, val: u32) {
     let addr = (LAPIC_BASE.load(Ordering::Relaxed) + offset as usize) as *mut u32;
     addr.write_volatile(val);
 }
 
-unsafe fn lapic_read(offset: u32) -> u32 {
+pub(crate) unsafe fn lapic_read(offset: u32) -> u32 {
     let addr = (LAPIC_BASE.load(Ordering::Relaxed) + offset as usize) as *const u32;
     addr.read_volatile()
 }
