@@ -21,6 +21,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "cat",    run: Shell::cmd_cat    },
     Cmd { name: "stat",   run: Shell::cmd_stat   },
     Cmd { name: "cd",     run: Shell::cmd_cd     },
+    Cmd { name: "pwd",    run: Shell::cmd_pwd    },
     Cmd { name: "help",   run: Shell::cmd_help   },
 ];
 
@@ -277,6 +278,10 @@ impl Shell {
                 crate::vfs::NodeKind::Dir  => *CWD.lock() = resolved,
             },
         }
+    }
+
+    fn cmd_pwd(&mut self, _: Option<String>) {
+        crate::println!("{}", cwd_get());
     }
 
     fn cmd_help(&mut self, arg: Option<String>) {
