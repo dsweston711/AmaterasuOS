@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use spin::Mutex;
 
 const BUF_CAP: usize = 256;
@@ -64,6 +65,8 @@ impl Shell {
             if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
                 w.clear();
             }
+        } else if chars_eq(cmd, "heap") {
+            self.cmd_heap();
         } else {
             crate::print!("unknown command: ");
             for &ch in cmd {
@@ -71,6 +74,23 @@ impl Shell {
             }
             crate::print!("\n");
         }
+    }
+
+    fn cmd_heap(&self) {
+        let s = crate::allocator::stats();
+        crate::println!("heap start : {:#012x}", s.heap_start);
+        crate::println!("heap size  : {} MB",    s.heap_size / (1024 * 1024));
+        crate::println!("bump used  : {} / {} KB", s.bump_used / 1024, s.bump_capacity / 1024);
+        crate::println!("slabs:");
+        for i in 0..6 {
+            let used = s.slab_total[i] - s.slab_free[i];
+            crate::println!("  {:>3}B  {}/{}", s.slab_sizes[i], used, s.slab_total[i]);
+        }
+        // Prove alloc works end-to-end with a live heap allocation.
+        let mut probe: Vec<u32> = Vec::new();
+        probe.push(0xDEAD_BEEF);
+        probe.push(0xCAFE_BABE);
+        crate::println!("alloc probe: Vec({}) OK", probe.len());
     }
 
     pub fn print_prompt(&self) {
