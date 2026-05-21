@@ -48,3 +48,7 @@ pub fn heap_start_virt() -> usize {
 pub fn heap_size() -> usize {
     HEAP_SIZE
 }
+
+pub fn phys_offset() -> usize {
+    PHYS_OFFSET.load(Ordering::Relaxed)
+}

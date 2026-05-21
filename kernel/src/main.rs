@@ -4,6 +4,7 @@
 
 extern crate alloc;
 
+mod acpi;
 mod allocator;
 mod framebuffer;
 mod idt;
@@ -46,6 +47,14 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     allocator::init(memory::heap_start_virt(), memory::heap_size());
     let t_alloc = time::rdtsc();
     serial_println!("[BOOT] allocator_init:   +{} ns", time::cycles_to_ns(t_alloc - t0));
+
+    if let Some(rsdp_phys) = boot_info.rsdp_addr.into_option() {
+        acpi::init(rsdp_phys, phys_offset);
+    } else {
+        serial_println!("[ACPI] no RSDP address from bootloader");
+    }
+    let t_acpi = time::rdtsc();
+    serial_println!("[BOOT] acpi_init:        +{} ns", time::cycles_to_ns(t_acpi - t0));
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
