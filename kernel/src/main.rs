@@ -2,6 +2,9 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 
+extern crate alloc;
+
+mod allocator;
 mod framebuffer;
 mod idt;
 mod keyboard;
@@ -11,10 +14,17 @@ mod serial;
 mod shell;
 mod time;
 
-use bootloader_api::{entry_point, BootInfo};
+use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
+use bootloader_api::config::Mapping;
 use core::panic::PanicInfo;
 
-entry_point!(kernel_main);
+pub static BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut config = BootloaderConfig::new_default();
+    config.mappings.physical_memory = Some(Mapping::Dynamic);
+    config
+};
+
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let t0 = time::rdtsc();
@@ -25,9 +35,17 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     serial_println!("[BOOT] t0={} (baseline)", t0);
     serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
 
-    memory::init(&boot_info.memory_regions);
+    let phys_offset = boot_info.physical_memory_offset
+        .into_option()
+        .expect("physical memory mapping not provided") as usize;
+
+    memory::init(&boot_info.memory_regions, phys_offset);
     let t_mem = time::rdtsc();
     serial_println!("[BOOT] memory_init:      +{} ns", time::cycles_to_ns(t_mem - t0));
+
+    allocator::init(memory::heap_start_virt(), memory::heap_size());
+    let t_alloc = time::rdtsc();
+    serial_println!("[BOOT] allocator_init:   +{} ns", time::cycles_to_ns(t_alloc - t0));
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();

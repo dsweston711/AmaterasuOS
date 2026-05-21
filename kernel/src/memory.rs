@@ -1,13 +1,15 @@
 use bootloader_api::info::{MemoryRegionKind, MemoryRegions};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 pub const HEAP_SIZE: usize = 16 * 1024 * 1024; // 16 MB
 
-static HEAP_START: AtomicU64 = AtomicU64::new(0);
+static HEAP_PHYS:   AtomicU64   = AtomicU64::new(0);
+static PHYS_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 /// Parse the bootloader memory map, log all usable regions to serial,
 /// and anchor the heap at the first usable region large enough to hold HEAP_SIZE.
-pub fn init(regions: &MemoryRegions) {
+pub fn init(regions: &MemoryRegions, phys_offset: usize) {
+    PHYS_OFFSET.store(phys_offset, Ordering::Relaxed);
     crate::serial_println!("[MEM] Usable memory regions:");
 
     let mut heap_found = false;
@@ -23,11 +25,13 @@ pub fn init(regions: &MemoryRegions) {
         );
 
         if !heap_found && size >= HEAP_SIZE as u64 {
-            HEAP_START.store(region.start, Ordering::Relaxed);
+            HEAP_PHYS.store(region.start, Ordering::Relaxed);
             heap_found = true;
             crate::serial_println!(
-                "[MEM] Heap reserved: {:#012x} + {} MB",
-                region.start, HEAP_SIZE / (1024 * 1024)
+                "[MEM] Heap reserved: {:#012x} + {} MB (virt {:#012x})",
+                region.start,
+                HEAP_SIZE / (1024 * 1024),
+                region.start as usize + phys_offset,
             );
         }
     }
@@ -37,8 +41,8 @@ pub fn init(regions: &MemoryRegions) {
     }
 }
 
-pub fn heap_start() -> u64 {
-    HEAP_START.load(Ordering::Relaxed)
+pub fn heap_start_virt() -> usize {
+    HEAP_PHYS.load(Ordering::Relaxed) as usize + PHYS_OFFSET.load(Ordering::Relaxed)
 }
 
 pub fn heap_size() -> usize {
