@@ -3,7 +3,8 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 
 use crate::keyboard::keyboard_handler;
 
-pub const PIC1_OFFSET: u8 = 0x20; // IRQ0-7 mapped to 0x20-0x27
+pub const KBD_VECTOR:      u8 = 0x21; // keyboard routed here by I/O APIC
+pub const SPURIOUS_VECTOR: u8 = 0xFF; // LAPIC spurious interrupt vector
 
 static IDT: Once<InterruptDescriptorTable> = Once::new();
 
@@ -13,11 +14,15 @@ pub fn init() {
         idt.breakpoint.set_handler_fn(breakpoint_handler);
         idt.general_protection_fault.set_handler_fn(gpf_handler);
         idt.page_fault.set_handler_fn(page_fault_handler);
-        idt[PIC1_OFFSET + 1].set_handler_fn(keyboard_handler);
+        idt[KBD_VECTOR].set_handler_fn(keyboard_handler);
+        idt[SPURIOUS_VECTOR].set_handler_fn(spurious_handler);
         idt
     });
     idt.load();
 }
+
+// Spurious LAPIC interrupts require no EOI — just return.
+extern "x86-interrupt" fn spurious_handler(_frame: InterruptStackFrame) {}
 
 extern "x86-interrupt" fn breakpoint_handler(frame: InterruptStackFrame) {
     panic!("EXCEPTION: BREAKPOINT\n{:#?}", frame);

@@ -6,6 +6,7 @@ extern crate alloc;
 
 mod acpi;
 mod allocator;
+mod apic;
 mod framebuffer;
 mod idt;
 mod keyboard;
@@ -72,8 +73,11 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 
     println!("AmaterasuOS");
 
-    unsafe { pic::remap(); }
-    unsafe { pic::enable_keyboard_only(); }
+    unsafe { pic::remap(); } // move PIC vectors to 0x20-0x2F before disabling
+    apic::init();            // mask PIC, enable LAPIC + I/O APIC, route keyboard
+    let t_apic = time::rdtsc();
+    serial_println!("[BOOT] apic_init:        +{} ns", time::cycles_to_ns(t_apic - t0));
+
     idt::init();
     unsafe { core::arch::asm!("sti"); }
 

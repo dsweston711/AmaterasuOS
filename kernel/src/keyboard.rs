@@ -150,7 +150,7 @@ pub fn scancode_to_char(scancode: u8, shift: bool, caps_lock: bool) -> Option<ch
 pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
     unsafe {
         let scancode = crate::pic::inb(0x60);
-        crate::pic::end_of_interrupt(1);
+        crate::apic::end_of_interrupt();
 
         // Handle modifier make/break codes before anything else.
         match scancode {
