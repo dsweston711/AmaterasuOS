@@ -79,10 +79,16 @@ impl Shell {
     fn submit(&mut self) {
         crate::print!("\n");
         if self.len > 0 {
-            let slot = self.hist_count % HIST_CAP;
-            self.history[slot][..self.len].copy_from_slice(&self.buf[..self.len]);
-            self.hist_len[slot] = self.len;
-            self.hist_count += 1;
+            let last_slot = self.hist_count.wrapping_sub(1) % HIST_CAP;
+            let is_dup = self.hist_count > 0
+                && self.hist_len[last_slot] == self.len
+                && self.history[last_slot][..self.len] == self.buf[..self.len];
+            if !is_dup {
+                let slot = self.hist_count % HIST_CAP;
+                self.history[slot][..self.len].copy_from_slice(&self.buf[..self.len]);
+                self.hist_len[slot] = self.len;
+                self.hist_count += 1;
+            }
         }
         self.hist_cursor = 0;
         self.dispatch();
