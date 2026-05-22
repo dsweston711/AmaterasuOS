@@ -59,4 +59,36 @@ impl Shell {
             }
         }
     }
+
+    pub(crate) fn cmd_export(&mut self, arg: Option<String>) {
+        match arg {
+            None => {
+                let mut vars = crate::env::list();
+                vars.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                for (k, v) in vars {
+                    crate::println!("{}={}", k, v);
+                }
+            }
+            Some(s) => {
+                let s = String::from(s.trim());
+                if let Some(eq) = s.find('=') {
+                    let key = &s[..eq];
+                    let val = &s[eq + 1..];
+                    crate::env::set(key, val);
+                } else if s.is_empty() {
+                    // `export` with only whitespace — treat as no-arg
+                    let mut vars = crate::env::list();
+                    vars.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                    for (k, v) in vars {
+                        crate::println!("{}={}", k, v);
+                    }
+                } else {
+                    match crate::env::get(&s) {
+                        Some(v) => crate::println!("{}={}", s, v),
+                        None    => crate::println!("export: {}: not set", s),
+                    }
+                }
+            }
+        }
+    }
 }

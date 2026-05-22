@@ -8,6 +8,7 @@ mod acpi;
 mod allocator;
 mod apic;
 mod cmd;
+mod env;
 mod cpu;
 mod timer;
 mod framebuffer;
@@ -59,6 +60,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let rd_addr = boot_info.ramdisk_addr.into_option().unwrap_or(0);
     let rd_len  = boot_info.ramdisk_len as usize;
     ramfs::init(rd_addr, rd_len, phys_offset);
+    env::init();
 
     if let Some(rsdp_phys) = boot_info.rsdp_addr.into_option() {
         acpi::init(rsdp_phys, phys_offset);
