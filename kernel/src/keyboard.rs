@@ -133,9 +133,10 @@ static SHIFT_MAP: [u8; 58] = [
 struct Modifiers {
     shift: bool,
     caps_lock: bool,
+    ctrl: bool,
 }
 
-static MODIFIERS: Mutex<Modifiers> = Mutex::new(Modifiers { shift: false, caps_lock: false });
+static MODIFIERS: Mutex<Modifiers> = Mutex::new(Modifiers { shift: false, caps_lock: false, ctrl: false });
 
 // Letter scancodes: Q-P row, A-L row, Z-M row.
 fn is_letter(scancode: u8) -> bool {
@@ -177,19 +178,27 @@ pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
         match scancode {
             0x2A | 0x36 => { MODIFIERS.lock().shift = true;  return; } // L/R shift press
             0xAA | 0xB6 => { MODIFIERS.lock().shift = false; return; } // L/R shift release
+            0x1D        => { MODIFIERS.lock().ctrl  = true;  return; } // Ctrl press
+            0x9D        => { MODIFIERS.lock().ctrl  = false; return; } // Ctrl release
             0x3A        => { let mut m = MODIFIERS.lock(); m.caps_lock ^= true; return; }
             sc if sc & 0x80 != 0 => return, // all other break codes
             _ => {}
         }
 
         // Read modifier state and release the lock before touching the shell.
-        let ch = {
+        let (ch, ctrl) = {
             let m = MODIFIERS.lock();
-            scancode_to_char(scancode, m.shift, m.caps_lock)
+            (scancode_to_char(scancode, m.shift, m.caps_lock), m.ctrl)
         };
 
         if let Some(ch) = ch {
-            crate::shell::SHELL.lock().push_char(ch);
+            let effective = if ctrl && ch.is_ascii_alphabetic() {
+                // Ctrl+letter produces the ASCII control character (letter & 0x1F).
+                char::from(ch.to_ascii_lowercase() as u8 & 0x1F)
+            } else {
+                ch
+            };
+            crate::shell::SHELL.lock().push_char(effective);
         }
     }
 }

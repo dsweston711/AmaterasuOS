@@ -82,10 +82,14 @@ impl Shell {
 
     pub fn push_char(&mut self, ch: char) {
         match ch {
-            '\x08' => self.backspace(),
-            '\n'   => self.submit(),
-            '\t'   => self.complete(),
-            ch     => {
+            '\x08'   => self.backspace(),
+            '\n'     => self.submit(),
+            '\t'     => self.complete(),
+            '\x03'   => self.ctrl_c(),
+            '\x0c'   => self.ctrl_l(),
+            '\x17'   => self.ctrl_w(),
+            '\x15'   => self.ctrl_u(),
+            ch       => {
                 if self.len < BUF_CAP {
                     self.buf[self.len] = ch;
                     self.len += 1;
@@ -101,6 +105,48 @@ impl Shell {
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.backspace();
         }
+    }
+
+    fn clear_line(&mut self) {
+        for _ in 0..self.len {
+            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+                w.backspace();
+            }
+        }
+        self.len = 0;
+    }
+
+    fn ctrl_c(&mut self) {
+        crate::println!("^C");
+        self.len = 0;
+        self.hist_cursor = 0;
+        self.print_prompt();
+    }
+
+    fn ctrl_l(&mut self) {
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.clear();
+        }
+        self.print_prompt();
+        for i in 0..self.len {
+            crate::print!("{}", self.buf[i]);
+        }
+    }
+
+    fn ctrl_w(&mut self) {
+        // delete back through trailing whitespace then through the preceding word
+        while self.len > 0 && self.buf[self.len - 1] == ' ' {
+            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
+            self.len -= 1;
+        }
+        while self.len > 0 && self.buf[self.len - 1] != ' ' {
+            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
+            self.len -= 1;
+        }
+    }
+
+    fn ctrl_u(&mut self) {
+        self.clear_line();
     }
 
     fn submit(&mut self) {
@@ -260,14 +306,20 @@ impl Shell {
 
         let typed: String = cmd.iter().collect();
         crate::print!("unknown command: {}", typed);
-        let mut best_dist = usize::MAX;
-        let mut best_name = "";
-        for entry in COMMANDS {
-            let d = edit_distance(cmd, entry.name);
-            if d < best_dist { best_dist = d; best_name = entry.name; }
-        }
-        if best_dist <= 2 {
-            crate::println!(" -- did you mean '{}'?", best_name);
+        let prefix_match = COMMANDS.iter().find(|e| e.name.starts_with(typed.as_str()));
+        let suggestion = if let Some(entry) = prefix_match {
+            Some(entry.name)
+        } else {
+            let mut best_dist = usize::MAX;
+            let mut best_name = "";
+            for entry in COMMANDS {
+                let d = edit_distance(cmd, entry.name);
+                if d < best_dist { best_dist = d; best_name = entry.name; }
+            }
+            if best_dist <= 2 { Some(best_name) } else { None }
+        };
+        if let Some(name) = suggestion {
+            crate::println!(" -- did you mean '{}'?", name);
         } else {
             crate::println!();
         }
