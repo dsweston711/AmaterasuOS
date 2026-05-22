@@ -1,0 +1,18 @@
+export [VAR=value | VAR | (none)]
+
+Set, query, or list environment variables.
+
+  export VAR=value   Set VAR to value
+  export VAR         Print the current value of VAR
+  export             List all variables (sorted)
+
+Variables are expanded with $VAR or ${VAR} in any command line.
+
+Built-in variables: HOME, SHELL, PWD (updated by cd).
+
+Examples:
+  export GREETING=hello
+  echo $GREETING
+  echo ${GREETING} world
+  export PWD
+  export

@@ -121,22 +121,32 @@ impl Shell {
     pub(crate) fn cmd_cd(&mut self, arg: Option<String>) {
         let path = match arg {
             Some(p) => p,
-            None    => { crate::shell::cwd_set(String::from("/")); return; }
+            None    => {
+                crate::shell::cwd_set(String::from("/"));
+                crate::env::set("PWD", "/");
+                return;
+            }
         };
         if path == "-" {
-            crate::shell::cwd_set(crate::shell::cwd_prev_get());
+            let prev = crate::shell::cwd_prev_get();
+            crate::env::set("PWD", &prev);
+            crate::shell::cwd_set(prev);
             return;
         }
         let resolved = crate::shell::normalize(&crate::shell::resolve(&path));
         if resolved == "/" {
             crate::shell::cwd_set(String::from("/"));
+            crate::env::set("PWD", "/");
             return;
         }
         match crate::vfs::lookup(&resolved) {
             None       => crate::println!("cd: not found: {}", path),
             Some(node) => match node.kind() {
                 crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
-                crate::vfs::NodeKind::Dir  => crate::shell::cwd_set(resolved),
+                crate::vfs::NodeKind::Dir  => {
+                    crate::env::set("PWD", &resolved);
+                    crate::shell::cwd_set(resolved);
+                }
             },
         }
     }

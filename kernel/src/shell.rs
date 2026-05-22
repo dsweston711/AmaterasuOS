@@ -52,6 +52,7 @@ pub(crate) static COMMANDS: &[Cmd] = &[
     Cmd { name: "heap",     usage: "heap",                                run: Shell::cmd_heap     },
     Cmd { name: "reboot",   usage: "reboot",                              run: Shell::cmd_reboot   },
     Cmd { name: "shutdown", usage: "shutdown",                            run: Shell::cmd_shutdown },
+    Cmd { name: "export",   usage: "export [VAR=value | VAR | (none)]",   run: Shell::cmd_export   },
     Cmd { name: "history",  usage: "history [n]",                         run: Shell::cmd_history  },
     Cmd { name: "help",     usage: "help [command]",                      run: Shell::cmd_help     },
 ];
@@ -409,7 +410,10 @@ impl Shell {
     fn dispatch_one(&mut self, cmd: &[char]) {
         let start = cmd.iter().position(|c| !c.is_whitespace()).unwrap_or(cmd.len());
         let end   = cmd.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(start);
-        let cmd   = &cmd[start..end];
+        let raw: String = cmd[start..end].iter().collect();
+        let expanded = crate::env::expand(&raw);
+        let cmd: alloc::vec::Vec<char> = expanded.chars().collect();
+        let cmd = cmd.as_slice();
 
         if cmd.is_empty() { return; }
 
