@@ -13,16 +13,22 @@ x86_64 UEFI hardware.
 
 ## Versioning scheme
 
-Format: `v<major>.<minor>[.<patch>]`
+The kernel reports a **CalVer build date** (`YYYY.MM.DD`) via `uname -r` and `stat /etc/version`.
+Update `initrd/etc/version` when a milestone merges and a new build is cut.
+The date is for human diagnostics only — no code should ever branch on it.
 
-| Level | Meaning | When to bump |
-|-------|---------|--------------|
-| **Major** | Architectural era | `0` = pre-alpha; bump to `1` when the 3-second boot goal is verified on real hardware |
-| **Minor** | Capability milestone | A new subsystem or significant feature area lands (new driver, new shell subsystem, VFS writes, process model, etc.) |
-| **Patch** | Polish within a minor | Bugfixes, small additions, no new subsystems (e.g. `v0.7.5` adds sorted ls inside the existing shell) |
+GitHub milestones use **v0.x / v1.x labels** as sprint names (project management only,
+not the version the kernel reports):
+- `v0.x` — pre-real-hardware era
+- `v1.0` — first verified boot under 3 seconds on real x86_64 UEFI hardware
+- `v1.x+` — post-hardware milestones
 
-Milestones in GitHub track these versions. Every issue belongs to exactly one
-milestone before work begins.
+No sub-milestones (no `v0.9.5`, `v0.9.1`, etc.) — patch work folds into the active milestone.
+Every issue belongs to exactly one milestone before work begins.
+
+**Compatibility is guaranteed by stable interfaces** (ADR-014 DriverEntry contract, VFS VNode
+trait), not by version-number checks. Drivers and software probe capabilities — they never
+inspect the build date.
 
 ---
 
@@ -101,7 +107,7 @@ Every new shell command requires **all three**:
 | `kernel/src/ramfs.rs` | In-memory filesystem backed by the initrd |
 | `kernel/src/pic.rs` | Port I/O helpers and PIC init |
 | `kernel/src/cpu.rs` | CPUID helpers |
-| `initrd/sys/help/` | Per-command help files (`.torii` extension) |
-| `initrd/sys/help.torii` | Main help listing printed by `help` |
+| `initrd/sys/help/` | Per-command help files (no extension) |
+| `initrd/sys/welcome` | Splash text printed on boot |
 | `docs/decisions/` | Architecture Decision Records (ADRs) |
 | `docs/boot-time-log.md` | Boot time measurements across milestones |
