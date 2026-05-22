@@ -721,7 +721,7 @@ fn cmd_arg(chars: &[char]) -> Option<String> {
     let start = rest.iter().position(|c| !c.is_whitespace())?;
     let trimmed = &rest[start..];
     let end   = trimmed.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(trimmed.len());
-    Some(trimmed[..end].iter().collect())
+    Some(tilde_expand(trimmed[..end].iter().collect()))
 }
 
 /// Read a VFS file at `path` and return its UTF-8 content, or None on error.
@@ -844,7 +844,7 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
     while i < tokens.len() {
         let tok = tokens[i];
         if stop || !tok.starts_with('-') || tok == "-" {
-            positional.push(String::from(tok));
+            positional.push(tilde_expand(String::from(tok)));
             i += 1;
             continue;
         }
@@ -885,6 +885,16 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
     }
 
     ParsedArgs { flags, flag_vals, positional }
+}
+
+fn tilde_expand(s: String) -> String {
+    if s.starts_with('~') {
+        let mut out = String::from("/");
+        out.push_str(&s[1..]);
+        out
+    } else {
+        s
+    }
 }
 
 /// Levenshtein edit distance between a char slice and a &str.

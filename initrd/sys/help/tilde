@@ -1,0 +1,8 @@
+tilde expansion
+
+  A leading ~ in any path argument is expanded to /.
+
+  Examples:
+    cd ~           change to root (same as cd /)
+    cat ~/etc/hostname
+    ls ~/sys/help
