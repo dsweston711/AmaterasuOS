@@ -28,30 +28,31 @@ impl ParsedArgs {
 }
 
 struct Cmd {
-    name: &'static str,
-    run:  fn(&mut Shell, Option<String>),
+    name:  &'static str,
+    usage: &'static str,
+    run:   fn(&mut Shell, Option<String>),
 }
 
 static COMMANDS: &[Cmd] = &[
-    Cmd { name: "clear",  run: Shell::cmd_clear  },
-    Cmd { name: "heap",   run: Shell::cmd_heap   },
-    Cmd { name: "uptime", run: Shell::cmd_uptime },
-    Cmd { name: "ls",     run: Shell::cmd_ls     },
-    Cmd { name: "cat",    run: Shell::cmd_cat    },
-    Cmd { name: "stat",   run: Shell::cmd_stat   },
-    Cmd { name: "cd",     run: Shell::cmd_cd     },
-    Cmd { name: "pwd",    run: Shell::cmd_pwd    },
-    Cmd { name: "cpu",    run: Shell::cmd_cpu    },
-    Cmd { name: "reboot",   run: Shell::cmd_reboot   },
-    Cmd { name: "echo",     run: Shell::cmd_echo     },
-    Cmd { name: "uname",    run: Shell::cmd_uname    },
-    Cmd { name: "hostname", run: Shell::cmd_hostname },
-    Cmd { name: "wc",       run: Shell::cmd_wc       },
-    Cmd { name: "head",     run: Shell::cmd_head     },
-    Cmd { name: "tail",     run: Shell::cmd_tail     },
-    Cmd { name: "grep",     run: Shell::cmd_grep     },
-    Cmd { name: "shutdown", run: Shell::cmd_shutdown },
-    Cmd { name: "help",     run: Shell::cmd_help     },
+    Cmd { name: "echo",     usage: "echo [text]",                         run: Shell::cmd_echo     },
+    Cmd { name: "uname",    usage: "uname [-a|-s|-r|-m]",                 run: Shell::cmd_uname    },
+    Cmd { name: "hostname", usage: "hostname",                            run: Shell::cmd_hostname },
+    Cmd { name: "wc",       usage: "wc [-l|-w|-c] <path>",               run: Shell::cmd_wc       },
+    Cmd { name: "head",     usage: "head [-n N] <path>",                  run: Shell::cmd_head     },
+    Cmd { name: "tail",     usage: "tail [-n N] <path>",                  run: Shell::cmd_tail     },
+    Cmd { name: "grep",     usage: "grep [-i|-n|-c] <pat> <path>",       run: Shell::cmd_grep     },
+    Cmd { name: "clear",    usage: "clear",                               run: Shell::cmd_clear    },
+    Cmd { name: "ls",       usage: "ls [path]",                           run: Shell::cmd_ls       },
+    Cmd { name: "cat",      usage: "cat <path>",                          run: Shell::cmd_cat      },
+    Cmd { name: "stat",     usage: "stat <path>",                         run: Shell::cmd_stat     },
+    Cmd { name: "cd",       usage: "cd [path]",                           run: Shell::cmd_cd       },
+    Cmd { name: "pwd",      usage: "pwd",                                 run: Shell::cmd_pwd      },
+    Cmd { name: "cpu",      usage: "cpu",                                 run: Shell::cmd_cpu      },
+    Cmd { name: "uptime",   usage: "uptime",                              run: Shell::cmd_uptime   },
+    Cmd { name: "heap",     usage: "heap",                                run: Shell::cmd_heap     },
+    Cmd { name: "reboot",   usage: "reboot",                              run: Shell::cmd_reboot   },
+    Cmd { name: "shutdown", usage: "shutdown",                            run: Shell::cmd_shutdown },
+    Cmd { name: "help",     usage: "help [command]",                      run: Shell::cmd_help     },
 ];
 
 pub struct Shell {
@@ -601,14 +602,24 @@ impl Shell {
     }
 
     fn cmd_help(&mut self, arg: Option<String>) {
-        let path = match &arg {
-            None      => String::from("/sys/help/index"),
-            Some(cmd) => alloc::format!("/sys/help/{}", cmd),
-        };
-        if !print_file(&path) {
-            match &arg {
-                None      => crate::println!("see /sys/help/ for per-command docs"),
-                Some(cmd) => crate::println!("no help found for {}", cmd),
+        match arg {
+            None => {
+                crate::println!("AmaterasuOS -- available commands\n");
+                for cmd in COMMANDS {
+                    crate::println!("  {}", cmd.usage);
+                }
+                crate::println!("\nType 'help <command>' for detailed usage.");
+                crate::println!("Type 'help tab' for tab completion tips.");
+            }
+            Some(cmd) => {
+                let path = alloc::format!("/sys/help/{}", cmd);
+                if !print_file(&path) {
+                    if let Some(entry) = COMMANDS.iter().find(|e| e.name == cmd.as_str()) {
+                        crate::println!("{}", entry.usage);
+                    } else {
+                        crate::println!("no help found for {}", cmd);
+                    }
+                }
             }
         }
     }
