@@ -1,0 +1,14 @@
+uname [-a] [-s] [-r] [-m]
+
+  Print kernel information.
+
+  Options:
+    -s    kernel name (default)
+    -r    kernel release / version
+    -m    machine hardware name
+    -a    print all fields on one line
+
+  Examples:
+    uname
+    uname -a
+    uname -r

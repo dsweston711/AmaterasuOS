@@ -44,6 +44,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "cpu",    run: Shell::cmd_cpu    },
     Cmd { name: "reboot",   run: Shell::cmd_reboot   },
     Cmd { name: "echo",     run: Shell::cmd_echo     },
+    Cmd { name: "uname",    run: Shell::cmd_uname    },
     Cmd { name: "shutdown", run: Shell::cmd_shutdown },
     Cmd { name: "help",     run: Shell::cmd_help     },
 ];
@@ -413,6 +414,26 @@ impl Shell {
                 crate::vfs::NodeKind::Dir  => cwd_set(resolved),
             },
         }
+    }
+
+    fn cmd_uname(&mut self, arg: Option<String>) {
+        const SYSNAME: &str = "AmaterasuOS";
+        const RELEASE: &str = env!("CARGO_PKG_VERSION");
+        const MACHINE: &str = "x86_64";
+
+        let s = arg.unwrap_or_default();
+        let parsed = parse_args(&s);
+
+        if parsed.flags.is_empty() && parsed.flag_vals.is_empty() || parsed.has_flag('a') {
+            crate::println!("{} {} {}", SYSNAME, RELEASE, MACHINE);
+            return;
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        if parsed.has_flag('s') { parts.push(SYSNAME); }
+        if parsed.has_flag('r') { parts.push(RELEASE); }
+        if parsed.has_flag('m') { parts.push(MACHINE); }
+        if parts.is_empty() { parts.push(SYSNAME); }
+        crate::println!("{}", parts.join(" "));
     }
 
     fn cmd_echo(&mut self, arg: Option<String>) {
