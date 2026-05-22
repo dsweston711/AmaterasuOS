@@ -4,6 +4,7 @@ AmaterasuOS -- available commands
   uname [-a|-s|-r|-m] print kernel information
   hostname           print the system hostname
   wc [-l|-w|-c] <path>  count lines, words, and bytes
+  head [-n N] <path>   print first N lines of a file
   clear              clear the screen
   ls [path]          list directory contents
   cat <path>         print file contents

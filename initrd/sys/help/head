@@ -1,0 +1,11 @@
+head [-n <count>] <file>
+
+  Print the first lines of a file.
+
+  Options:
+    -n <count>    number of lines to print (default: 10)
+
+  Examples:
+    head /sys/help/index
+    head -n 5 /sys/help/index
+    head -n1 /etc/hostname

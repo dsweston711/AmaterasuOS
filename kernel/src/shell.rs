@@ -47,6 +47,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "uname",    run: Shell::cmd_uname    },
     Cmd { name: "hostname", run: Shell::cmd_hostname },
     Cmd { name: "wc",       run: Shell::cmd_wc       },
+    Cmd { name: "head",     run: Shell::cmd_head     },
     Cmd { name: "shutdown", run: Shell::cmd_shutdown },
     Cmd { name: "help",     run: Shell::cmd_help     },
 ];
@@ -415,6 +416,28 @@ impl Shell {
                 crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
                 crate::vfs::NodeKind::Dir  => cwd_set(resolved),
             },
+        }
+    }
+
+    fn cmd_head(&mut self, arg: Option<String>) {
+        let s = match arg {
+            Some(s) => s,
+            None    => { crate::println!("usage: head [-n <count>] <file>"); return; }
+        };
+        let parsed = parse_args(&s);
+        let count: usize = parsed.flag_val('n')
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10);
+        let path = match parsed.get(0) {
+            Some(p) => normalize(&resolve(p)),
+            None    => { crate::println!("usage: head [-n <count>] <file>"); return; }
+        };
+        let content = match read_file_str(&path) {
+            Some(c) => c,
+            None    => { crate::println!("head: {}: not found", path); return; }
+        };
+        for line in content.lines().take(count) {
+            crate::println!("{}", line);
         }
     }
 
