@@ -81,7 +81,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let t_fb = time::rdtsc();
     serial_println!("[BOOT] framebuffer_init: +{} ns", time::cycles_to_ns(t_fb - t0));
 
-    if !shell::print_file("/sys/welcome.torii") {
+    if !shell::print_file("/sys/welcome") {
         println!("AmaterasuOS");
     }
 
