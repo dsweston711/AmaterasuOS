@@ -1,0 +1,11 @@
+echo [-n] [text...]
+
+  Print text to the screen.
+
+  Options:
+    -n    do not print a trailing newline
+
+  Examples:
+    echo hello world
+    echo -n no newline here
+    echo
