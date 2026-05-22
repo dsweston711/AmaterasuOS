@@ -74,11 +74,11 @@ make run
 
 Every new shell command requires **all three**:
 
-1. **Handler** — `fn cmd_<name>(&mut self, arg: Option<String>)` added to `Shell`,
-   registered in the `COMMANDS` static in `kernel/src/shell.rs`
-2. **Help file** — `initrd/sys/help/<name>.torii` following the style of existing
-   help files (command synopsis, description, examples)
-3. **Main listing** — a one-line entry added to `initrd/sys/help.torii`
+1. **Handler** — `fn cmd_<name>(&mut self, arg: Option<String>)` added to `Shell`
+2. **Registry entry** — a `Cmd { name, usage, run }` line added to the `COMMANDS`
+   static in `kernel/src/shell.rs`; `usage` is the one-line synopsis shown by `help`
+3. **Help file** — `initrd/sys/help/<name>` following the style of existing help
+   files (command synopsis, description, examples); no extension
 
 ---
 
