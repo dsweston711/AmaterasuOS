@@ -5,6 +5,7 @@ AmaterasuOS -- available commands
   hostname           print the system hostname
   wc [-l|-w|-c] <path>  count lines, words, and bytes
   head [-n N] <path>   print first N lines of a file
+  tail [-n N] <path>   print last N lines of a file
   clear              clear the screen
   ls [path]          list directory contents
   cat <path>         print file contents
