@@ -744,8 +744,7 @@ impl Shell {
     }
 
     fn cmd_shutdown(&mut self, _: Option<String>) {
-        // QEMU PIIX4 ACPI S5: SLP_EN | SLP_TYP=5 written to PM1a control block.
-        unsafe { crate::pic::outw(0x604, 0x2000); }
+        unsafe { crate::pic::acpi_power_off(); }
     }
 
     fn cmd_reboot(&mut self, _: Option<String>) {
