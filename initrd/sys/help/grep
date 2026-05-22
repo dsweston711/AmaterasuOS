@@ -1,0 +1,15 @@
+grep [-i] [-n] [-c] <pattern> <file>
+
+  Search for a pattern in a file and print matching lines.
+  Pattern matching is substring-based (no regular expressions).
+
+  Options:
+    -i    case-insensitive matching
+    -n    prefix each matching line with its line number
+    -c    print only a count of matching lines
+
+  Examples:
+    grep help /sys/help/index
+    grep -i HELP /sys/help/index
+    grep -n cat /sys/help/index
+    grep -c the /sys/help/ls
