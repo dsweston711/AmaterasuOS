@@ -232,9 +232,19 @@ impl Shell {
             return;
         }
 
-        crate::print!("unknown command: ");
-        for &ch in cmd { crate::print!("{}", ch); }
-        crate::print!("\n");
+        let typed: String = cmd.iter().collect();
+        crate::print!("unknown command: {}", typed);
+        let mut best_dist = usize::MAX;
+        let mut best_name = "";
+        for entry in COMMANDS {
+            let d = edit_distance(cmd, entry.name);
+            if d < best_dist { best_dist = d; best_name = entry.name; }
+        }
+        if best_dist <= 2 {
+            crate::println!(" -- did you mean '{}'?", best_name);
+        } else {
+            crate::println!();
+        }
     }
 
     fn cmd_clear(&mut self, _: Option<String>) {
@@ -540,6 +550,27 @@ fn complete_path(partial: &str) -> (Vec<String>, usize) {
     }
 
     (candidates, prefix.len())
+}
+
+/// Levenshtein edit distance between a char slice and a &str.
+fn edit_distance(a: &[char], b: &str) -> usize {
+    let bv: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), bv.len());
+    let mut row: Vec<usize> = (0..=n).collect();
+    for i in 1..=m {
+        let mut prev = row[0];
+        row[0] = i;
+        for j in 1..=n {
+            let old = row[j];
+            row[j] = if a[i - 1] == bv[j - 1] {
+                prev
+            } else {
+                1 + prev.min(row[j]).min(row[j - 1])
+            };
+            prev = old;
+        }
+    }
+    row[n]
 }
 
 /// Return the byte length of the longest common prefix across all candidates.
