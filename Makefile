@@ -64,6 +64,25 @@ test-integration: image
 	elif grep -q '\[BOOT\] kernel_ready' /tmp/amaterasu-boot.log 2>/dev/null; then \
 		BOOT_NS=$$(grep 'kernel_ready' /tmp/amaterasu-boot.log | sed 's/.*+\([0-9]*\).*/\1/'); \
 		echo "PASS: kernel reached ready state ($${BOOT_NS} ns)"; \
+		echo "  Boot stage timings (WARN threshold in parens):"; \
+		for entry in \
+			"serial_init:50000000" \
+			"memory_init:50000000" \
+			"allocator_init:50000000" \
+			"acpi_init:50000000" \
+			"framebuffer_init:3600000000" \
+			"apic_init:200000000" \
+			"kernel_ready:4000000000"; do \
+			name=$$(echo "$$entry" | cut -d: -f1); \
+			budget=$$(echo "$$entry" | cut -d: -f2); \
+			ns=$$(grep "\[BOOT\].*$$name" /tmp/amaterasu-boot.log | sed 's/.*+\([0-9]*\).*/\1/'); \
+			if [ -z "$$ns" ]; then continue; fi; \
+			if [ "$$ns" -gt "$$budget" ]; then \
+				printf "  WARN  %-22s %12s ns  (budget %s ns)\n" "$$name" "$$ns" "$$budget"; \
+			else \
+				printf "  ok    %-22s %12s ns\n" "$$name" "$$ns"; \
+			fi; \
+		done; \
 	else \
 		echo "FAIL: kernel did not reach ready state"; \
 		echo "log: $$(wc -c < /tmp/amaterasu-boot.log 2>/dev/null) bytes"; \
