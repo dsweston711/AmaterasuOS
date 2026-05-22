@@ -219,6 +219,7 @@ pub struct FramebufferWriter {
     fg: [u8; 3],
     bg: [u8; 3],
     blink_on: bool,
+    cursor_char: char,
 }
 
 impl FramebufferWriter {
@@ -231,6 +232,7 @@ impl FramebufferWriter {
             fg: [0xFF, 0xFF, 0xFF],
             bg: [0x00, 0x00, 0x00],
             blink_on: false,
+            cursor_char: ' ',
         }
     }
 
@@ -250,27 +252,26 @@ impl FramebufferWriter {
         self.col = col.min(self.cols().saturating_sub(1));
     }
 
-    /// Draw (or erase) a full-cell block cursor at the current cell.
+    /// Draw or restore the cursor cell by rendering cursor_char with inverted
+    /// (visible) or normal (hidden) colors. Restores the character instead of
+    /// blitting a solid block, so moving the cursor never erases text.
     fn draw_cursor_cell(&mut self, visible: bool) {
-        let px    = self.col * GLYPH_W;
-        let py    = self.row * GLYPH_H;
-        let color = if visible { self.fg } else { self.bg };
-        let bpp   = self.info.bytes_per_pixel;
-        for row_off in 0..GLYPH_H {
-            for col_off in 0..GLYPH_W {
-                let offset = ((py + row_off) * self.info.stride + (px + col_off)) * bpp;
-                if offset + bpp <= self.buffer.len() {
-                    self.buffer[offset]     = color[2];
-                    self.buffer[offset + 1] = color[1];
-                    self.buffer[offset + 2] = color[0];
-                    if bpp == 4 { self.buffer[offset + 3] = 0xFF; }
-                }
-            }
-        }
+        let (glyph_fg, glyph_bg) = if visible {
+            (self.bg, self.fg) // inverted: dark text on light background
+        } else {
+            (self.fg, self.bg) // normal: light text on dark background
+        };
+        write_glyph(
+            self.buffer, &self.info, self.cursor_char,
+            self.col * GLYPH_W, self.row * GLYPH_H,
+            glyph_fg, glyph_bg,
+        );
     }
 
-    /// Show cursor at current position and mark it visible.
-    pub fn cursor_show(&mut self) {
+    /// Show cursor at current position, recording which character sits there
+    /// so hide/tick can restore or re-invert it correctly.
+    pub fn cursor_show(&mut self, ch: char) {
+        self.cursor_char = ch;
         self.blink_on = true;
         self.draw_cursor_cell(true);
     }
@@ -325,6 +326,7 @@ impl FramebufferWriter {
         self.col = 0;
         self.row = 0;
         self.blink_on = false;
+        self.cursor_char = ' ';
     }
 
     pub fn backspace(&mut self) {
@@ -415,9 +417,9 @@ pub fn cursor_tick() {
 }
 
 /// Show cursor immediately — called by shell after visual changes.
-pub fn cursor_show() {
+pub fn cursor_show(ch: char) {
     if let Some(w) = WRITER.lock().as_mut() {
-        w.cursor_show();
+        w.cursor_show(ch);
     }
 }
 

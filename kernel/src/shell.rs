@@ -85,6 +85,10 @@ impl Shell {
         }
     }
 
+    fn cursor_char(&self) -> char {
+        if self.cursor_pos < self.len { self.buf[self.cursor_pos] } else { ' ' }
+    }
+
     pub fn push_char(&mut self, ch: char) {
         match ch {
             '\x08'   => self.backspace(),
@@ -117,7 +121,7 @@ impl Shell {
                 }
             }
         }
-        crate::framebuffer::cursor_show();
+        crate::framebuffer::cursor_show(self.cursor_char());
     }
 
     fn backspace(&mut self) {
@@ -152,7 +156,8 @@ impl Shell {
         crate::print!(" "); // erase stale trailing char after deletion
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.set_col(self.prompt_col + self.cursor_pos);
-            w.cursor_show();
+            let ch = self.cursor_char();
+            w.cursor_show(ch);
         }
     }
 
@@ -162,7 +167,7 @@ impl Shell {
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + self.cursor_pos);
-            w.cursor_show();
+            w.cursor_show(self.cursor_char());
         }
     }
 
@@ -172,7 +177,7 @@ impl Shell {
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + self.cursor_pos);
-            w.cursor_show();
+            w.cursor_show(self.cursor_char());
         }
     }
 
@@ -181,7 +186,7 @@ impl Shell {
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col);
-            w.cursor_show();
+            w.cursor_show(self.cursor_char());
         }
     }
 
@@ -190,7 +195,7 @@ impl Shell {
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + self.len);
-            w.cursor_show();
+            w.cursor_show(self.cursor_char());
         }
     }
 
@@ -220,6 +225,7 @@ impl Shell {
         for i in 0..self.len {
             crate::print!("{}", self.buf[i]);
         }
+        crate::framebuffer::cursor_show(self.cursor_char());
     }
 
     fn ctrl_w(&mut self) {
@@ -270,7 +276,7 @@ impl Shell {
         }
         self.hist_cursor += 1;
         self.load_history_entry();
-        crate::framebuffer::cursor_show();
+        crate::framebuffer::cursor_show(self.cursor_char());
     }
 
     pub fn history_down(&mut self) {
@@ -281,7 +287,7 @@ impl Shell {
         } else {
             self.load_history_entry();
         }
-        crate::framebuffer::cursor_show();
+        crate::framebuffer::cursor_show(self.cursor_char());
     }
 
     fn load_history_entry(&mut self) {
@@ -381,6 +387,7 @@ impl Shell {
                     crate::print!("\n");
                     self.print_prompt();
                     self.reprint_buf();
+                    crate::framebuffer::cursor_show(self.cursor_char());
                 }
             }
         }
@@ -810,6 +817,7 @@ impl Shell {
             w.get_col()
         } else { 0 };
         self.cursor_pos = self.len;
+        crate::framebuffer::cursor_show(self.cursor_char());
     }
 }
 
