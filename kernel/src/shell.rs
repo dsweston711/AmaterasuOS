@@ -197,11 +197,22 @@ impl Shell {
                 }
             }
             _ => {
-                crate::print!("\n");
-                for c in &candidates { crate::print!("{}  ", c); }
-                crate::print!("\n");
-                self.print_prompt();
-                self.reprint_buf();
+                let lcp = longest_common_prefix(&candidates);
+                if lcp > prefix_len {
+                    for ch in candidates[0][prefix_len..lcp].chars() {
+                        if self.len < BUF_CAP {
+                            self.buf[self.len] = ch;
+                            self.len += 1;
+                            crate::print!("{}", ch);
+                        }
+                    }
+                } else {
+                    crate::print!("\n");
+                    for c in &candidates { crate::print!("{}  ", c); }
+                    crate::print!("\n");
+                    self.print_prompt();
+                    self.reprint_buf();
+                }
             }
         }
     }
@@ -527,6 +538,20 @@ fn complete_path(partial: &str) -> (Vec<String>, usize) {
     }
 
     (candidates, prefix.len())
+}
+
+/// Return the byte length of the longest common prefix across all candidates.
+fn longest_common_prefix(candidates: &[String]) -> usize {
+    if candidates.is_empty() { return 0; }
+    let first = candidates[0].as_bytes();
+    let mut len = first.len();
+    for c in &candidates[1..] {
+        let b = c.as_bytes();
+        len = len.min(b.len());
+        len = (0..len).take_while(|&i| first[i] == b[i]).count();
+        if len == 0 { break; }
+    }
+    len
 }
 
 /// Collapse `.` and `..` components from an absolute path.
