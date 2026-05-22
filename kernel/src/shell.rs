@@ -273,7 +273,8 @@ impl Shell {
             match crate::vfs::with_root(|n| n.readdir()) {
                 None                            => crate::println!("ls: no filesystem mounted"),
                 Some(names) if names.is_empty() => crate::println!("(empty)"),
-                Some(names)                     => {
+                Some(mut names)                 => {
+                    names.sort_unstable();
                     for name in &names {
                         let full = alloc::format!("/{}", name);
                         let suffix = match crate::vfs::lookup(&full) {
@@ -291,7 +292,8 @@ impl Shell {
             None       => crate::println!("ls: not found: {}", path_str),
             Some(node) => match node.kind() {
                 crate::vfs::NodeKind::Dir => {
-                    let names = node.readdir();
+                    let mut names = node.readdir();
+                    names.sort_unstable();
                     if names.is_empty() {
                         crate::println!("(empty)");
                     } else {
