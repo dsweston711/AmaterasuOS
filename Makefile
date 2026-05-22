@@ -6,7 +6,7 @@ OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd
 OVMF      := /usr/share/ovmf/OVMF.fd
 
-.PHONY: all kernel initrd image run clean test test-unit test-integration
+.PHONY: all kernel initrd image run run-uefi clean test test-unit test-integration
 
 all: image
 
@@ -28,6 +28,28 @@ run: image
 		-serial stdio \
 		-m 128M \
 		-no-reboot
+
+run-uefi: image
+	@if [ ! -f "$(OVMF_CODE)" ] && [ ! -f "$(OVMF)" ]; then \
+		echo "ERROR: OVMF firmware not found."; \
+		echo "  Ubuntu/Debian: sudo apt install ovmf"; \
+		echo "  Fedora/RHEL:   sudo dnf install edk2-ovmf"; \
+		echo "  Override:      OVMF_CODE=... OVMF_VARS=...   or   OVMF=..."; \
+		exit 1; \
+	fi; \
+	if [ -f "$(OVMF_CODE)" ] && [ -f "$(OVMF_VARS)" ]; then \
+		cp -n $(OVMF_VARS) target/OVMF_VARS.fd 2>/dev/null; true; \
+		PFLASH="-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) -drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
+	else \
+		cp -n $(OVMF) target/OVMF_VARS.fd 2>/dev/null; true; \
+		PFLASH="-drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
+	fi; \
+	qemu-system-x86_64 \
+		$$PFLASH \
+		-drive format=raw,file=$(UEFI_IMG) \
+		-serial stdio \
+		-no-reboot \
+		-m 128M
 
 test: test-unit test-integration
 
