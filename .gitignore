@@ -1,4 +1,5 @@
 /target
+/tests/unit/target
 *.img
 *.iso
 *.efi

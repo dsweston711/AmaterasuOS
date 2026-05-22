@@ -44,9 +44,11 @@ pub fn expand(s: &str) -> String {
                 if let Some(val) = get(&key) { out.push_str(&val); }
             }
             Some(&c) if c.is_ascii_alphanumeric() || c == '_' => {
-                let key: String = core::iter::once(chars.next().unwrap())
-                    .chain(chars.by_ref().take_while(|c| c.is_ascii_alphanumeric() || *c == '_'))
-                    .collect();
+                let _ = c; // suppress unused warning; presence confirmed by peek
+                let mut key = String::new();
+                while matches!(chars.peek(), Some(c) if c.is_ascii_alphanumeric() || *c == '_') {
+                    key.push(chars.next().unwrap());
+                }
                 if let Some(val) = get(&key) { out.push_str(&val); }
             }
             _ => out.push('$'),
