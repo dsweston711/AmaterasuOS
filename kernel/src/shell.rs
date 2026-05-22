@@ -2,8 +2,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use spin::Mutex;
 
-const BUF_CAP:  usize = 256;
-const HIST_CAP: usize = 16;
+const BUF_CAP:         usize = 256;
+pub(crate) const HIST_CAP: usize = 16;
 
 pub static SHELL: Mutex<Shell> = Mutex::new(Shell::new());
 static CWD:      Mutex<String> = Mutex::new(String::new());
@@ -27,13 +27,13 @@ impl ParsedArgs {
     }
 }
 
-struct Cmd {
-    name:  &'static str,
-    usage: &'static str,
-    run:   fn(&mut Shell, Option<String>),
+pub(crate) struct Cmd {
+    pub(crate) name:  &'static str,
+    pub(crate) usage: &'static str,
+    pub(crate) run:   fn(&mut Shell, Option<String>),
 }
 
-static COMMANDS: &[Cmd] = &[
+pub(crate) static COMMANDS: &[Cmd] = &[
     Cmd { name: "echo",     usage: "echo [text]",                         run: Shell::cmd_echo     },
     Cmd { name: "uname",    usage: "uname [-a|-s|-r|-m]",                 run: Shell::cmd_uname    },
     Cmd { name: "hostname", usage: "hostname",                            run: Shell::cmd_hostname },
@@ -57,16 +57,16 @@ static COMMANDS: &[Cmd] = &[
 ];
 
 pub struct Shell {
-    buf:         [char; BUF_CAP],
-    len:         usize,
-    cursor_pos:  usize, // position within buf (0..=len); used by #79 movement
-    prompt_col:  usize, // screen column where input starts after the prompt
-    history:     [[char; BUF_CAP]; HIST_CAP],
-    hist_len:    [usize; HIST_CAP],
-    hist_count:  usize,
-    hist_cursor: usize,
-    live_buf:    [char; BUF_CAP],
-    live_len:    usize,
+    buf:              [char; BUF_CAP],
+    len:              usize,
+    cursor_pos:       usize,
+    prompt_col:       usize,
+    pub(crate) history:     [[char; BUF_CAP]; HIST_CAP],
+    pub(crate) hist_len:    [usize; HIST_CAP],
+    pub(crate) hist_count:  usize,
+    pub(crate) hist_cursor: usize,
+    live_buf:         [char; BUF_CAP],
+    live_len:         usize,
 }
 
 impl Shell {
@@ -440,374 +440,6 @@ impl Shell {
         }
     }
 
-    fn cmd_clear(&mut self, _: Option<String>) {
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
-            w.clear();
-        }
-    }
-
-    fn cmd_heap(&mut self, _: Option<String>) {
-        let s = crate::allocator::stats();
-        crate::println!("heap start : {:#012x}", s.heap_start);
-        crate::println!("heap size  : {} MB",    s.heap_size / (1024 * 1024));
-        crate::println!("bump used  : {} / {} KB", s.bump_used / 1024, s.bump_capacity / 1024);
-        crate::println!("slabs:");
-        for i in 0..6 {
-            let used = s.slab_total[i] - s.slab_free[i];
-            crate::println!("  {:>3}B  {}/{}", s.slab_sizes[i], used, s.slab_total[i]);
-        }
-        let mut probe: Vec<u32> = Vec::new();
-        probe.push(0xDEAD_BEEF);
-        probe.push(0xCAFE_BABE);
-        crate::println!("alloc probe: Vec({}) OK", probe.len());
-    }
-
-    fn cmd_uptime(&mut self, _: Option<String>) {
-        let ms = crate::timer::uptime_ms();
-        crate::println!("Uptime: {}s {}ms", ms / 1000, ms % 1000);
-    }
-
-    fn cmd_ls(&mut self, path: Option<String>) {
-        let resolved = path.map(|p| normalize(&resolve(&p))).unwrap_or_else(cwd_get);
-        let path_str = resolved.as_str();
-        let is_root = path_str.split('/').filter(|s| !s.is_empty()).next().is_none();
-
-        if is_root {
-            match crate::vfs::with_root(|n| n.readdir()) {
-                None                            => crate::println!("ls: no filesystem mounted"),
-                Some(names) if names.is_empty() => crate::println!("(empty)"),
-                Some(mut names)                 => {
-                    names.sort_unstable();
-                    for name in &names {
-                        let full = alloc::format!("/{}", name);
-                        let suffix = match crate::vfs::lookup(&full) {
-                            Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
-                            _ => "",
-                        };
-                        crate::println!("{}{}", name, suffix);
-                    }
-                }
-            }
-            return;
-        }
-
-        match crate::vfs::lookup(path_str) {
-            None       => crate::println!("ls: not found: {}", path_str),
-            Some(node) => match node.kind() {
-                crate::vfs::NodeKind::Dir => {
-                    let mut names = node.readdir();
-                    names.sort_unstable();
-                    if names.is_empty() {
-                        crate::println!("(empty)");
-                    } else {
-                        for name in &names {
-                            let full = alloc::format!("{}/{}", path_str, name);
-                            let suffix = match crate::vfs::lookup(&full) {
-                                Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
-                                _ => "",
-                            };
-                            crate::println!("{}{}", name, suffix);
-                        }
-                    }
-                }
-                crate::vfs::NodeKind::File => {
-                    let leaf = path_str.split('/').filter(|s| !s.is_empty()).last().unwrap_or(path_str);
-                    crate::println!("{}", leaf);
-                }
-            },
-        }
-    }
-
-    fn cmd_cat(&mut self, arg: Option<String>) {
-        let path = match arg {
-            Some(p) => normalize(&resolve(&p)),
-            None    => { crate::println!("usage: cat <path>"); return; }
-        };
-        match crate::vfs::lookup(&path) {
-            None       => crate::println!("cat: not found: {}", path),
-            Some(node) => match node.kind() {
-                crate::vfs::NodeKind::Dir  => crate::println!("cat: {}: is a directory", path),
-                crate::vfs::NodeKind::File => {
-                    let size = node.size();
-                    if size == 0 { return; }
-                    let mut buf: Vec<u8> = Vec::new();
-                    buf.resize(size, 0u8);
-                    let n = node.read(&mut buf, 0);
-                    match core::str::from_utf8(&buf[..n]) {
-                        Ok(s)  => {
-                            crate::print!("{}", s);
-                            if !s.ends_with('\n') { crate::print!("\n"); }
-                        }
-                        Err(_) => crate::println!("cat: {}: binary file ({} bytes)", path, n),
-                    }
-                }
-            },
-        }
-    }
-
-    fn cmd_stat(&mut self, arg: Option<String>) {
-        let path = match arg {
-            Some(p) => normalize(&resolve(&p)),
-            None    => { crate::println!("usage: stat <path>"); return; }
-        };
-        match crate::vfs::lookup(&path) {
-            None       => crate::println!("stat: not found: {}", path),
-            Some(node) => {
-                let kind_str = match node.kind() {
-                    crate::vfs::NodeKind::File => "file",
-                    crate::vfs::NodeKind::Dir  => "directory",
-                };
-                crate::println!("path: {}", path);
-                crate::println!("type: {}", kind_str);
-                crate::println!("size: {} bytes", node.size());
-            }
-        }
-    }
-
-    fn cmd_cd(&mut self, arg: Option<String>) {
-        let path = match arg {
-            Some(p) => p,
-            None    => { cwd_set(String::from("/")); return; }
-        };
-        if path == "-" {
-            let prev = { PREV_CWD.lock().clone() };
-            let dest = if prev.is_empty() { String::from("/") } else { prev };
-            cwd_set(dest);
-            return;
-        }
-        let resolved = normalize(&resolve(&path));
-        if resolved == "/" {
-            cwd_set(String::from("/"));
-            return;
-        }
-        match crate::vfs::lookup(&resolved) {
-            None       => crate::println!("cd: not found: {}", path),
-            Some(node) => match node.kind() {
-                crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
-                crate::vfs::NodeKind::Dir  => cwd_set(resolved),
-            },
-        }
-    }
-
-    fn cmd_grep(&mut self, arg: Option<String>) {
-        let s = match arg {
-            Some(s) => s,
-            None    => { crate::println!("usage: grep [-i] [-n] [-c] <pattern> <file>"); return; }
-        };
-        let parsed = parse_args(&s);
-        let pattern = match parsed.get(0) {
-            Some(p) => String::from(p),
-            None    => { crate::println!("usage: grep [-i] [-n] [-c] <pattern> <file>"); return; }
-        };
-        let path = match parsed.get(1) {
-            Some(p) => normalize(&resolve(p)),
-            None    => { crate::println!("usage: grep [-i] [-n] [-c] <pattern> <file>"); return; }
-        };
-        let content = match read_file_str(&path) {
-            Some(c) => c,
-            None    => { crate::println!("grep: {}: not found", path); return; }
-        };
-        let case_insensitive = parsed.has_flag('i');
-        let show_numbers     = parsed.has_flag('n');
-        let count_only       = parsed.has_flag('c');
-        let pat_lower = if case_insensitive { pattern.to_lowercase() } else { pattern.clone() };
-        let mut matches: usize = 0;
-        for (i, line) in content.lines().enumerate() {
-            let haystack = if case_insensitive { line.to_lowercase() } else { String::from(line) };
-            if haystack.contains(pat_lower.as_str()) {
-                matches += 1;
-                if !count_only {
-                    if show_numbers {
-                        crate::println!("{}:{}", i + 1, line);
-                    } else {
-                        crate::println!("{}", line);
-                    }
-                }
-            }
-        }
-        if count_only { crate::println!("{}", matches); }
-    }
-
-    fn cmd_tail(&mut self, arg: Option<String>) {
-        let s = match arg {
-            Some(s) => s,
-            None    => { crate::println!("usage: tail [-n <count>] <file>"); return; }
-        };
-        let parsed = parse_args(&s);
-        let count: usize = parsed.flag_val('n')
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-        let path = match parsed.get(0) {
-            Some(p) => normalize(&resolve(p)),
-            None    => { crate::println!("usage: tail [-n <count>] <file>"); return; }
-        };
-        let content = match read_file_str(&path) {
-            Some(c) => c,
-            None    => { crate::println!("tail: {}: not found", path); return; }
-        };
-        let lines: Vec<&str> = content.lines().collect();
-        let start = lines.len().saturating_sub(count);
-        for line in &lines[start..] {
-            crate::println!("{}", line);
-        }
-    }
-
-    fn cmd_head(&mut self, arg: Option<String>) {
-        let s = match arg {
-            Some(s) => s,
-            None    => { crate::println!("usage: head [-n <count>] <file>"); return; }
-        };
-        let parsed = parse_args(&s);
-        let count: usize = parsed.flag_val('n')
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(10);
-        let path = match parsed.get(0) {
-            Some(p) => normalize(&resolve(p)),
-            None    => { crate::println!("usage: head [-n <count>] <file>"); return; }
-        };
-        let content = match read_file_str(&path) {
-            Some(c) => c,
-            None    => { crate::println!("head: {}: not found", path); return; }
-        };
-        for line in content.lines().take(count) {
-            crate::println!("{}", line);
-        }
-    }
-
-    fn cmd_wc(&mut self, arg: Option<String>) {
-        let s = match arg {
-            Some(s) => s,
-            None    => { crate::println!("usage: wc [-l] [-w] [-c] <file>"); return; }
-        };
-        let parsed = parse_args(&s);
-        let path = match parsed.get(0) {
-            Some(p) => normalize(&resolve(p)),
-            None    => { crate::println!("usage: wc [-l] [-w] [-c] <file>"); return; }
-        };
-        let content = match read_file_str(&path) {
-            Some(c) => c,
-            None    => { crate::println!("wc: {}: not found", path); return; }
-        };
-        let lines = content.lines().count();
-        let words = content.split_whitespace().count();
-        let bytes = content.len();
-        let all = parsed.flags.is_empty() && parsed.flag_vals.is_empty();
-        if all || parsed.has_flag('l') { crate::print!("{:8}", lines); }
-        if all || parsed.has_flag('w') { crate::print!("{:8}", words); }
-        if all || parsed.has_flag('c') { crate::print!("{:8}", bytes); }
-        crate::println!(" {}", path);
-    }
-
-    fn cmd_hostname(&mut self, _: Option<String>) {
-        match crate::vfs::lookup("/etc/hostname") {
-            Some(node) if node.kind() == crate::vfs::NodeKind::File => {
-                let size = node.size();
-                let mut buf = alloc::vec![0u8; size];
-                let n = node.read(&mut buf, 0);
-                if let Ok(s) = core::str::from_utf8(&buf[..n]) {
-                    crate::println!("{}", s.trim());
-                }
-            }
-            _ => crate::println!("amaterasu"),
-        }
-    }
-
-    fn cmd_uname(&mut self, arg: Option<String>) {
-        const SYSNAME: &str = "AmaterasuOS";
-        const RELEASE: &str = env!("CARGO_PKG_VERSION");
-        const MACHINE: &str = "x86_64";
-
-        let s = arg.unwrap_or_default();
-        let parsed = parse_args(&s);
-
-        if parsed.flags.is_empty() && parsed.flag_vals.is_empty() || parsed.has_flag('a') {
-            crate::println!("{} {} {}", SYSNAME, RELEASE, MACHINE);
-            return;
-        }
-        let mut parts: Vec<&str> = Vec::new();
-        if parsed.has_flag('s') { parts.push(SYSNAME); }
-        if parsed.has_flag('r') { parts.push(RELEASE); }
-        if parsed.has_flag('m') { parts.push(MACHINE); }
-        if parts.is_empty() { parts.push(SYSNAME); }
-        crate::println!("{}", parts.join(" "));
-    }
-
-    fn cmd_echo(&mut self, arg: Option<String>) {
-        let s = arg.unwrap_or_default();
-        let parsed = parse_args(&s);
-        let output = parsed.positional.join(" ");
-        if parsed.has_flag('n') {
-            crate::print!("{}", output);
-        } else {
-            crate::println!("{}", output);
-        }
-    }
-
-    fn cmd_shutdown(&mut self, _: Option<String>) {
-        unsafe { crate::pic::acpi_power_off(); }
-    }
-
-    fn cmd_reboot(&mut self, _: Option<String>) {
-        unsafe {
-            // Drain keyboard controller input buffer before pulsing reset.
-            while crate::pic::inb(0x64) & 0x02 != 0 {}
-            crate::pic::outb(0x64, 0xFE);
-        }
-    }
-
-    fn cmd_cpu(&mut self, _: Option<String>) {
-        crate::println!("vendor:  {}", crate::cpu::vendor());
-        match crate::cpu::brand() {
-            Some(b) => crate::println!("brand:   {}", b),
-            None    => crate::println!("brand:   (not available)"),
-        }
-    }
-
-    fn cmd_pwd(&mut self, _: Option<String>) {
-        crate::println!("{}", cwd_get());
-    }
-
-    fn cmd_history(&mut self, arg: Option<String>) {
-        let available = self.hist_count.min(HIST_CAP);
-        if available == 0 { return; }
-        let limit = match arg {
-            Some(s) => s.trim().parse::<usize>().unwrap_or(available).min(available),
-            None    => available,
-        };
-        let skip = available - limit;
-        let start_slot = (self.hist_count - available + skip) % HIST_CAP;
-        let start_num  =  self.hist_count - available + skip + 1;
-        for i in 0..limit {
-            let slot = (start_slot + i) % HIST_CAP;
-            let len  = self.hist_len[slot];
-            let s: String = self.history[slot][..len].iter().collect();
-            crate::println!("{:4}  {}", start_num + i, s);
-        }
-    }
-
-    fn cmd_help(&mut self, arg: Option<String>) {
-        match arg {
-            None => {
-                crate::println!("AmaterasuOS -- available commands\n");
-                for cmd in COMMANDS {
-                    crate::println!("  {}", cmd.usage);
-                }
-                crate::println!("\nType 'help <command>' for detailed usage.");
-                crate::println!("Type 'help tab' for tab completion tips.");
-            }
-            Some(cmd) => {
-                let path = alloc::format!("/sys/help/{}", cmd);
-                if !print_file(&path) {
-                    if let Some(entry) = COMMANDS.iter().find(|e| e.name == cmd.as_str()) {
-                        crate::println!("{}", entry.usage);
-                    } else {
-                        crate::println!("no help found for {}", cmd);
-                    }
-                }
-            }
-        }
-    }
-
     pub fn print_prompt(&mut self) {
         let display = {
             let cwd = CWD.lock();
@@ -854,7 +486,7 @@ fn cmd_arg(chars: &[char]) -> Option<String> {
 }
 
 /// Read a VFS file at `path` and return its UTF-8 content, or None on error.
-fn read_file_str(path: &str) -> Option<String> {
+pub(crate) fn read_file_str(path: &str) -> Option<String> {
     let node = crate::vfs::lookup(path)?;
     if node.kind() != crate::vfs::NodeKind::File { return None; }
     let size = node.size();
@@ -885,20 +517,26 @@ pub(crate) fn print_file(path: &str) -> bool {
 }
 
 /// Return the current working directory, defaulting to "/" if unset.
-fn cwd_get() -> String {
+pub(crate) fn cwd_get() -> String {
     let cwd = CWD.lock();
     if cwd.is_empty() { String::from("/") } else { cwd.clone() }
 }
 
+/// Return the previous working directory (for `cd -`), defaulting to "/".
+pub(crate) fn cwd_prev_get() -> String {
+    let prev = PREV_CWD.lock();
+    if prev.is_empty() { String::from("/") } else { prev.clone() }
+}
+
 /// Set CWD to `new`, saving the previous value in PREV_CWD.
-fn cwd_set(new: String) {
+pub(crate) fn cwd_set(new: String) {
     let old = core::mem::replace(&mut *CWD.lock(), new);
     *PREV_CWD.lock() = old;
 }
 
 /// Resolve `path` to an absolute path against the current CWD.
 /// Paths that already start with '/' are returned as-is.
-fn resolve(path: &str) -> String {
+pub(crate) fn resolve(path: &str) -> String {
     if path.starts_with('/') {
         return String::from(path);
     }
@@ -1107,7 +745,7 @@ fn longest_common_prefix(candidates: &[String]) -> usize {
 }
 
 /// Collapse `.` and `..` components from an absolute path.
-fn normalize(path: &str) -> String {
+pub(crate) fn normalize(path: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
     for component in path.split('/') {
         match component {

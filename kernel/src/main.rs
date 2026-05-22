@@ -7,6 +7,7 @@ extern crate alloc;
 mod acpi;
 mod allocator;
 mod apic;
+mod cmd;
 mod cpu;
 mod timer;
 mod framebuffer;
