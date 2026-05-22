@@ -54,7 +54,7 @@ test-integration: image
 	timeout 60 qemu-system-x86_64 \
 		$$PFLASH \
 		-drive format=raw,file=$(UEFI_IMG) \
-		-nographic -no-reboot -m 128M \
+		-display none -serial stdio -no-reboot -m 128M \
 		2>&1 | tee /tmp/amaterasu-boot.log | grep -m1 '\[BOOT\] kernel_ready'; \
 	true; \
 	if grep -q 'KERNEL PANIC' /tmp/amaterasu-boot.log 2>/dev/null; then \
