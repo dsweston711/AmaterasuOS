@@ -400,8 +400,8 @@ impl Shell {
 
     fn cmd_help(&mut self, arg: Option<String>) {
         let path = match &arg {
-            None      => String::from("/sys/help.torii"),
-            Some(cmd) => alloc::format!("/sys/help/{}.torii", cmd),
+            None      => String::from("/sys/help/index"),
+            Some(cmd) => alloc::format!("/sys/help/{}", cmd),
         };
         if !print_file(&path) {
             match &arg {
