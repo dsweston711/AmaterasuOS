@@ -445,7 +445,11 @@ impl Shell {
             let cwd = CWD.lock();
             if cwd.is_empty() { String::from("/") } else { String::from(cwd.as_str()) }
         };
-        crate::print!("amaterasu:{}> ", display);
+        crate::print!("amaterasu:");
+        crate::framebuffer::set_fg(crate::framebuffer::COLOR_PROMPT);
+        crate::print!("{}", display);
+        crate::framebuffer::reset_colors();
+        crate::print!("> ");
         self.prompt_col = if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.get_col()
         } else { 0 };
