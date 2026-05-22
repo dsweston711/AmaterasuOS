@@ -167,9 +167,13 @@ pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
         let extended = EXTENDED.swap(false, Ordering::Relaxed);
         if extended {
             match scancode {
-                0x48 => { crate::shell::SHELL.lock().history_up(); }
-                0x50 => { crate::shell::SHELL.lock().history_down(); }
-                _ => {}  // other extended codes (Left, Right, breaks) ignored
+                0x48 => { crate::shell::SHELL.lock().history_up();     }
+                0x50 => { crate::shell::SHELL.lock().history_down();   }
+                0x4B => { crate::shell::SHELL.lock().cursor_left();    }
+                0x4D => { crate::shell::SHELL.lock().cursor_right();   }
+                0x47 => { crate::shell::SHELL.lock().cursor_to_start(); }
+                0x4F => { crate::shell::SHELL.lock().cursor_to_end();  }
+                _ => {}
             }
             return;
         }
