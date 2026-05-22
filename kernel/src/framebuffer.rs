@@ -5,6 +5,12 @@ use spin::Mutex;
 pub const GLYPH_W: usize = 8;
 pub const GLYPH_H: usize = 8;
 
+pub const COLOR_FG:     [u8; 3] = [0xFF, 0xFF, 0xFF];
+pub const COLOR_BG:     [u8; 3] = [0x00, 0x00, 0x00];
+pub const COLOR_DIR:    [u8; 3] = [0x56, 0x9C, 0xD6]; // blue — ls directories
+pub const COLOR_PROMPT: [u8; 3] = [0x4E, 0xC9, 0xB0]; // teal — prompt path
+pub const COLOR_ERROR:  [u8; 3] = [0xF4, 0x47, 0x47]; // red  — error messages
+
 // 8x8 bitmap font for ASCII 32–127 (96 glyphs).
 // Each glyph is 8 bytes; each byte is one row, MSB = leftmost pixel.
 #[rustfmt::skip]
@@ -420,6 +426,18 @@ pub fn cursor_tick() {
 pub fn cursor_show(ch: char) {
     if let Some(w) = WRITER.lock().as_mut() {
         w.cursor_show(ch);
+    }
+}
+
+pub fn set_fg(color: [u8; 3]) {
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.set_colors(color, COLOR_BG);
+    }
+}
+
+pub fn reset_colors() {
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.set_colors(COLOR_FG, COLOR_BG);
     }
 }
 

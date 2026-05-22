@@ -12,17 +12,25 @@ impl Shell {
 
         if is_root {
             match crate::vfs::with_root(|n| n.readdir()) {
-                None                            => crate::println!("ls: no filesystem mounted"),
+                None                            => {
+                    crate::framebuffer::set_fg(crate::framebuffer::COLOR_ERROR);
+                    crate::println!("ls: no filesystem mounted");
+                    crate::framebuffer::reset_colors();
+                }
                 Some(names) if names.is_empty() => crate::println!("(empty)"),
                 Some(mut names)                 => {
                     names.sort_unstable();
                     for name in &names {
                         let full = alloc::format!("/{}", name);
-                        let suffix = match crate::vfs::lookup(&full) {
-                            Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
-                            _ => "",
-                        };
-                        crate::println!("{}{}", name, suffix);
+                        let is_dir = matches!(crate::vfs::lookup(&full),
+                            Some(n) if n.kind() == crate::vfs::NodeKind::Dir);
+                        if is_dir {
+                            crate::framebuffer::set_fg(crate::framebuffer::COLOR_DIR);
+                            crate::println!("{}/", name);
+                            crate::framebuffer::reset_colors();
+                        } else {
+                            crate::println!("{}", name);
+                        }
                     }
                 }
             }
@@ -30,7 +38,11 @@ impl Shell {
         }
 
         match crate::vfs::lookup(path_str) {
-            None       => crate::println!("ls: not found: {}", path_str),
+            None       => {
+                crate::framebuffer::set_fg(crate::framebuffer::COLOR_ERROR);
+                crate::println!("ls: not found: {}", path_str);
+                crate::framebuffer::reset_colors();
+            }
             Some(node) => match node.kind() {
                 crate::vfs::NodeKind::Dir => {
                     let mut names = node.readdir();
@@ -40,11 +52,15 @@ impl Shell {
                     } else {
                         for name in &names {
                             let full = alloc::format!("{}/{}", path_str, name);
-                            let suffix = match crate::vfs::lookup(&full) {
-                                Some(n) if n.kind() == crate::vfs::NodeKind::Dir => "/",
-                                _ => "",
-                            };
-                            crate::println!("{}{}", name, suffix);
+                            let is_dir = matches!(crate::vfs::lookup(&full),
+                                Some(n) if n.kind() == crate::vfs::NodeKind::Dir);
+                            if is_dir {
+                                crate::framebuffer::set_fg(crate::framebuffer::COLOR_DIR);
+                                crate::println!("{}/", name);
+                                crate::framebuffer::reset_colors();
+                            } else {
+                                crate::println!("{}", name);
+                            }
                         }
                     }
                 }
