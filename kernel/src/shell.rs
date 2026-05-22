@@ -9,6 +9,24 @@ pub static SHELL: Mutex<Shell> = Mutex::new(Shell::new());
 static CWD:      Mutex<String> = Mutex::new(String::new());
 static PREV_CWD: Mutex<String> = Mutex::new(String::new());
 
+pub(crate) struct ParsedArgs {
+    pub flags:      Vec<char>,
+    pub flag_vals:  Vec<(char, String)>,
+    pub positional: Vec<String>,
+}
+
+impl ParsedArgs {
+    pub fn has_flag(&self, c: char) -> bool {
+        self.flags.contains(&c) || self.flag_vals.iter().any(|(f, _)| *f == c)
+    }
+    pub fn flag_val(&self, c: char) -> Option<&str> {
+        self.flag_vals.iter().find(|(f, _)| *f == c).map(|(_, v)| v.as_str())
+    }
+    pub fn get(&self, i: usize) -> Option<&str> {
+        self.positional.get(i).map(|s| s.as_str())
+    }
+}
+
 struct Cmd {
     name: &'static str,
     run:  fn(&mut Shell, Option<String>),
@@ -550,6 +568,69 @@ fn complete_path(partial: &str) -> (Vec<String>, usize) {
     }
 
     (candidates, prefix.len())
+}
+
+/// Parse a raw argument string into flags and positional arguments.
+///
+/// Disambiguation rules (no flag-spec needed for v0.8 commands):
+///   `-la`  → boolean flags ['l', 'a']        (remaining chars are alpha → more flags)
+///   `-n10` → flag_val ('n', "10")             (remaining chars start with digit → value)
+///   `-n 5` → flag_val ('n', "5")             (lone flag, next token is numeric → value)
+///   `-n p`  → boolean flag 'n', positional p  (lone flag, next token is non-numeric)
+///   `--`   → stop flag parsing; rest are positional
+pub(crate) fn parse_args(input: &str) -> ParsedArgs {
+    let mut flags:      Vec<char>          = Vec::new();
+    let mut flag_vals:  Vec<(char, String)> = Vec::new();
+    let mut positional: Vec<String>        = Vec::new();
+
+    let tokens: Vec<&str> = input.split_whitespace().collect();
+    let mut i = 0;
+    let mut stop = false;
+
+    while i < tokens.len() {
+        let tok = tokens[i];
+        if stop || !tok.starts_with('-') || tok == "-" {
+            positional.push(String::from(tok));
+            i += 1;
+            continue;
+        }
+        if tok == "--" {
+            stop = true;
+            i += 1;
+            continue;
+        }
+
+        let chars: Vec<char> = tok[1..].chars().collect();
+        let mut j = 0;
+        while j < chars.len() {
+            let flag = chars[j];
+            j += 1;
+            if j < chars.len() {
+                if chars[j].is_ascii_digit() {
+                    // Digits following the flag letter are its value.
+                    let val: String = chars[j..].iter().collect();
+                    flag_vals.push((flag, val));
+                    break;
+                }
+                // More alpha chars → combined boolean flags; keep looping.
+                flags.push(flag);
+            } else {
+                // Last letter in this token — look at the next token.
+                let next_is_num = tokens.get(i + 1)
+                    .map(|t| t.starts_with(|c: char| c.is_ascii_digit()))
+                    .unwrap_or(false);
+                if next_is_num {
+                    flag_vals.push((flag, String::from(tokens[i + 1])));
+                    i += 1;
+                } else {
+                    flags.push(flag);
+                }
+            }
+        }
+        i += 1;
+    }
+
+    ParsedArgs { flags, flag_vals, positional }
 }
 
 /// Levenshtein edit distance between a char slice and a &str.
