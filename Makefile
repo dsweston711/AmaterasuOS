@@ -2,6 +2,7 @@ KERNEL   := target/x86_64-unknown-none/debug/amaterasu_kernel
 INITRD   := target/initrd.tar
 BIOS_IMG := target/amaterasu-bios.img
 UEFI_IMG := target/amaterasu-uefi.img
+OVMF     := /usr/share/ovmf/OVMF.fd
 
 .PHONY: all kernel initrd image run clean test test-unit test-integration
 
@@ -32,10 +33,18 @@ test-unit:
 	cargo test --manifest-path tests/unit/Cargo.toml
 
 test-integration: image
-	@echo "=== Integration: boot test (allow ~3 min for SeaBIOS + bootloader) ===" ; \
+	@if [ ! -f "$(OVMF)" ]; then \
+		echo "ERROR: OVMF firmware not found at $(OVMF)"; \
+		echo "  Ubuntu/Debian: sudo apt install ovmf"; \
+		echo "  Fedora/RHEL:   sudo dnf install edk2-ovmf"; \
+		echo "  Override:      make test-integration OVMF=/path/to/OVMF.fd"; \
+		exit 1; \
+	fi
+	@echo "=== Integration: boot test (UEFI/OVMF) ===" ; \
 	rm -f /tmp/amaterasu-boot.log ; \
-	timeout 180 qemu-system-x86_64 \
-		-drive format=raw,file=$(BIOS_IMG) \
+	timeout 60 qemu-system-x86_64 \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF) \
+		-drive format=raw,file=$(UEFI_IMG) \
 		-nographic \
 		-no-reboot \
 		-m 128M \
