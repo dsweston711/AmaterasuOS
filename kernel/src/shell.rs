@@ -721,7 +721,16 @@ fn cmd_arg(chars: &[char]) -> Option<String> {
     let start = rest.iter().position(|c| !c.is_whitespace())?;
     let trimmed = &rest[start..];
     let end   = trimmed.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(trimmed.len());
-    Some(tilde_expand(trimmed[..end].iter().collect()))
+    let raw: String = trimmed[..end].iter().collect();
+    let unquoted = if raw.len() >= 2
+        && ((raw.starts_with('"')  && raw.ends_with('"'))
+         || (raw.starts_with('\'') && raw.ends_with('\'')))
+    {
+        String::from(&raw[1..raw.len() - 1])
+    } else {
+        raw
+    };
+    Some(tilde_expand(unquoted))
 }
 
 /// Read a VFS file at `path` and return its UTF-8 content, or None on error.
@@ -837,12 +846,12 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
     let mut flag_vals:  Vec<(char, String)> = Vec::new();
     let mut positional: Vec<String>        = Vec::new();
 
-    let tokens: Vec<&str> = input.split_whitespace().collect();
+    let tokens: Vec<String> = tokenize_quoted(input);
     let mut i = 0;
     let mut stop = false;
 
     while i < tokens.len() {
-        let tok = tokens[i];
+        let tok = tokens[i].as_str();
         if stop || !tok.starts_with('-') || tok == "-" {
             positional.push(tilde_expand(String::from(tok)));
             i += 1;
@@ -874,7 +883,7 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
                     .map(|t| t.starts_with(|c: char| c.is_ascii_digit()))
                     .unwrap_or(false);
                 if next_is_num {
-                    flag_vals.push((flag, String::from(tokens[i + 1])));
+                    flag_vals.push((flag, tokens[i + 1].clone()));
                     i += 1;
                 } else {
                     flags.push(flag);
@@ -885,6 +894,31 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
     }
 
     ParsedArgs { flags, flag_vals, positional }
+}
+
+/// Split input into tokens respecting single- and double-quoted spans.
+/// Quotes are stripped from the resulting tokens.
+fn tokenize_quoted(input: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quote: Option<char> = None;
+    for ch in input.chars() {
+        match in_quote {
+            Some(q) if ch == q => in_quote = None,
+            Some(_)            => current.push(ch),
+            None => match ch {
+                '"' | '\'' => in_quote = Some(ch),
+                c if c.is_whitespace() => {
+                    if !current.is_empty() {
+                        tokens.push(core::mem::take(&mut current));
+                    }
+                }
+                c => current.push(c),
+            },
+        }
+    }
+    if !current.is_empty() { tokens.push(current); }
+    tokens
 }
 
 fn tilde_expand(s: String) -> String {
