@@ -90,16 +90,29 @@ impl Shell {
             '\x08'   => self.backspace(),
             '\n'     => self.submit(),
             '\t'     => self.complete(),
+            '\x01'   => self.cursor_to_start(),
             '\x03'   => self.ctrl_c(),
+            '\x05'   => self.cursor_to_end(),
             '\x0c'   => self.ctrl_l(),
             '\x17'   => self.ctrl_w(),
             '\x15'   => self.ctrl_u(),
             ch       => {
                 if self.len < BUF_CAP {
-                    self.buf[self.len] = ch;
-                    self.len += 1;
-                    self.cursor_pos = self.len;
-                    crate::print!("{}", ch);
+                    if self.cursor_pos == self.len {
+                        // Fast path: append at end.
+                        self.buf[self.len] = ch;
+                        self.len += 1;
+                        self.cursor_pos = self.len;
+                        crate::print!("{}", ch);
+                    } else {
+                        // Insert in middle: shift right and redraw tail.
+                        self.buf.copy_within(self.cursor_pos..self.len, self.cursor_pos + 1);
+                        self.buf[self.cursor_pos] = ch;
+                        self.len += 1;
+                        self.cursor_pos += 1;
+                        self.redraw_tail();
+                        return; // redraw_tail calls cursor_show
+                    }
                 }
             }
         }
@@ -108,10 +121,75 @@ impl Shell {
 
     fn backspace(&mut self) {
         if self.cursor_pos == 0 { return; }
-        self.len -= 1;
+        if self.cursor_pos == self.len {
+            // Fast path: delete at end.
+            self.len -= 1;
+            self.cursor_pos -= 1;
+            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+                w.backspace();
+            }
+        } else {
+            // Delete in middle: shift left and redraw tail.
+            self.buf.copy_within(self.cursor_pos..self.len, self.cursor_pos - 1);
+            self.len -= 1;
+            self.cursor_pos -= 1;
+            self.redraw_tail();
+        }
+    }
+
+    /// Rewrite buf[cursor_pos..len] on screen from the cursor column,
+    /// append a space to erase the old trailing char (for deletions),
+    /// then reposition the framebuffer cursor back to cursor_pos.
+    fn redraw_tail(&mut self) {
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.cursor_hide();
+            w.set_col(self.prompt_col + self.cursor_pos);
+        }
+        for i in self.cursor_pos..self.len {
+            crate::print!("{}", self.buf[i]);
+        }
+        crate::print!(" "); // erase stale trailing char after deletion
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.set_col(self.prompt_col + self.cursor_pos);
+            w.cursor_show();
+        }
+    }
+
+    pub fn cursor_left(&mut self) {
+        if self.cursor_pos == 0 { return; }
         self.cursor_pos -= 1;
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
-            w.backspace();
+            w.cursor_hide();
+            w.set_col(self.prompt_col + self.cursor_pos);
+            w.cursor_show();
+        }
+    }
+
+    pub fn cursor_right(&mut self) {
+        if self.cursor_pos == self.len { return; }
+        self.cursor_pos += 1;
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.cursor_hide();
+            w.set_col(self.prompt_col + self.cursor_pos);
+            w.cursor_show();
+        }
+    }
+
+    pub fn cursor_to_start(&mut self) {
+        self.cursor_pos = 0;
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.cursor_hide();
+            w.set_col(self.prompt_col);
+            w.cursor_show();
+        }
+    }
+
+    pub fn cursor_to_end(&mut self) {
+        self.cursor_pos = self.len;
+        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.cursor_hide();
+            w.set_col(self.prompt_col + self.len);
+            w.cursor_show();
         }
     }
 
