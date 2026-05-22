@@ -32,11 +32,10 @@ test-unit:
 	cargo test --manifest-path tests/unit/Cargo.toml
 
 test-integration: image
-	@echo "=== Integration: boot test ===" ; \
-	if timeout 10 qemu-system-x86_64 \
+	@echo "=== Integration: boot test (allow ~3 min for SeaBIOS + bootloader) ===" ; \
+	if timeout 180 qemu-system-x86_64 \
 		-drive format=raw,file=$(BIOS_IMG) \
-		-serial stdio \
-		-display none \
+		-nographic \
 		-no-reboot \
 		-m 128M \
 		2>/dev/null \
