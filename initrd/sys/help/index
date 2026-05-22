@@ -1,6 +1,7 @@
 AmaterasuOS -- available commands
 
   echo [text]        print text to the screen
+  uname [-a|-s|-r|-m] print kernel information
   clear              clear the screen
   ls [path]          list directory contents
   cat <path>         print file contents
