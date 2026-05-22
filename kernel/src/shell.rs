@@ -291,11 +291,20 @@ impl Shell {
     }
 
     fn dispatch(&mut self) {
-        let chars = &self.buf[..self.len];
+        let input: String = self.buf[..self.len].iter().collect();
+        let segments = split_semicolons(&input);
+        for seg in segments {
+            let seg = seg.trim();
+            if seg.is_empty() { continue; }
+            let chars: Vec<char> = seg.chars().collect();
+            self.dispatch_one(&chars);
+        }
+    }
 
-        let start = chars.iter().position(|c| !c.is_whitespace()).unwrap_or(self.len);
-        let end   = chars.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(start);
-        let cmd   = &chars[start..end];
+    fn dispatch_one(&mut self, cmd: &[char]) {
+        let start = cmd.iter().position(|c| !c.is_whitespace()).unwrap_or(cmd.len());
+        let end   = cmd.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(start);
+        let cmd   = &cmd[start..end];
 
         if cmd.is_empty() { return; }
 
@@ -894,6 +903,26 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
     }
 
     ParsedArgs { flags, flag_vals, positional }
+}
+
+/// Split on `;` outside of quoted spans; returns each segment as a &str.
+fn split_semicolons(input: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut in_quote: Option<char> = None;
+    let mut start = 0;
+    for (i, ch) in input.char_indices() {
+        match in_quote {
+            Some(q) if ch == q => in_quote = None,
+            Some(_)            => {}
+            None => match ch {
+                '"' | '\'' => in_quote = Some(ch),
+                ';' => { out.push(&input[start..i]); start = i + 1; }
+                _   => {}
+            },
+        }
+    }
+    out.push(&input[start..]);
+    out
 }
 
 /// Split input into tokens respecting single- and double-quoted spans.
