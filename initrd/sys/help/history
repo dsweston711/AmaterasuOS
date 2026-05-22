@@ -1,0 +1,11 @@
+history [n]
+
+  Print recent command history. Shows up to 16 entries by default,
+  numbered by their position in the session.
+
+  Options:
+    n    show only the last n entries
+
+  Examples:
+    history
+    history 5
