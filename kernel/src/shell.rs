@@ -46,6 +46,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "echo",     run: Shell::cmd_echo     },
     Cmd { name: "uname",    run: Shell::cmd_uname    },
     Cmd { name: "hostname", run: Shell::cmd_hostname },
+    Cmd { name: "wc",       run: Shell::cmd_wc       },
     Cmd { name: "shutdown", run: Shell::cmd_shutdown },
     Cmd { name: "help",     run: Shell::cmd_help     },
 ];
@@ -417,6 +418,30 @@ impl Shell {
         }
     }
 
+    fn cmd_wc(&mut self, arg: Option<String>) {
+        let s = match arg {
+            Some(s) => s,
+            None    => { crate::println!("usage: wc [-l] [-w] [-c] <file>"); return; }
+        };
+        let parsed = parse_args(&s);
+        let path = match parsed.get(0) {
+            Some(p) => normalize(&resolve(p)),
+            None    => { crate::println!("usage: wc [-l] [-w] [-c] <file>"); return; }
+        };
+        let content = match read_file_str(&path) {
+            Some(c) => c,
+            None    => { crate::println!("wc: {}: not found", path); return; }
+        };
+        let lines = content.lines().count();
+        let words = content.split_whitespace().count();
+        let bytes = content.len();
+        let all = parsed.flags.is_empty() && parsed.flag_vals.is_empty();
+        if all || parsed.has_flag('l') { crate::print!("{:8}", lines); }
+        if all || parsed.has_flag('w') { crate::print!("{:8}", words); }
+        if all || parsed.has_flag('c') { crate::print!("{:8}", bytes); }
+        crate::println!(" {}", path);
+    }
+
     fn cmd_hostname(&mut self, _: Option<String>) {
         match crate::vfs::lookup("/etc/hostname") {
             Some(node) if node.kind() == crate::vfs::NodeKind::File => {
@@ -527,6 +552,17 @@ fn cmd_arg(chars: &[char]) -> Option<String> {
     let trimmed = &rest[start..];
     let end   = trimmed.iter().rposition(|c| !c.is_whitespace()).map(|i| i + 1).unwrap_or(trimmed.len());
     Some(trimmed[..end].iter().collect())
+}
+
+/// Read a VFS file at `path` and return its UTF-8 content, or None on error.
+fn read_file_str(path: &str) -> Option<String> {
+    let node = crate::vfs::lookup(path)?;
+    if node.kind() != crate::vfs::NodeKind::File { return None; }
+    let size = node.size();
+    if size == 0 { return Some(String::new()); }
+    let mut buf = alloc::vec![0u8; size];
+    let n = node.read(&mut buf, 0);
+    core::str::from_utf8(&buf[..n]).ok().map(String::from)
 }
 
 /// Read a VFS file at `path` and print its UTF-8 content. Returns false if

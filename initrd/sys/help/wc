@@ -1,0 +1,16 @@
+wc [-l] [-w] [-c] <file>
+
+  Count lines, words, and bytes in a file.
+
+  Options:
+    -l    print line count only
+    -w    print word count only
+    -c    print byte count only
+
+  With no options, prints all three counts followed by the filename.
+  Columns are right-aligned to 8 characters, matching POSIX output.
+
+  Examples:
+    wc /etc/hostname
+    wc -l /sys/help/index
+    wc -c /sys/welcome
