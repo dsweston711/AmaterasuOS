@@ -218,6 +218,7 @@ pub struct FramebufferWriter {
     row: usize, // cursor row    in glyph-grid units
     fg: [u8; 3],
     bg: [u8; 3],
+    blink_on: bool,
 }
 
 impl FramebufferWriter {
@@ -229,15 +230,61 @@ impl FramebufferWriter {
             row: 0,
             fg: [0xFF, 0xFF, 0xFF],
             bg: [0x00, 0x00, 0x00],
+            blink_on: false,
         }
     }
 
-    fn cols(&self) -> usize {
+    pub fn cols(&self) -> usize {
         self.info.width / GLYPH_W
     }
 
     fn rows(&self) -> usize {
         self.info.height / GLYPH_H
+    }
+
+    pub fn get_col(&self) -> usize { self.col }
+    pub fn get_row(&self) -> usize { self.row }
+
+    /// Reposition the text cursor without drawing — caller must manage cursor visibility.
+    pub fn set_col(&mut self, col: usize) {
+        self.col = col.min(self.cols().saturating_sub(1));
+    }
+
+    /// Draw (or erase) a two-row underline cursor at the current cell.
+    fn draw_cursor_cell(&mut self, visible: bool) {
+        let px  = self.col * GLYPH_W;
+        let py  = self.row * GLYPH_H;
+        let color = if visible { self.fg } else { self.bg };
+        let bpp = self.info.bytes_per_pixel;
+        for row_off in (GLYPH_H - 2)..GLYPH_H {
+            for col_off in 0..GLYPH_W {
+                let offset = ((py + row_off) * self.info.stride + (px + col_off)) * bpp;
+                if offset + bpp <= self.buffer.len() {
+                    self.buffer[offset]     = color[2];
+                    self.buffer[offset + 1] = color[1];
+                    self.buffer[offset + 2] = color[0];
+                    if bpp == 4 { self.buffer[offset + 3] = 0xFF; }
+                }
+            }
+        }
+    }
+
+    /// Show cursor at current position and mark it visible.
+    pub fn cursor_show(&mut self) {
+        self.blink_on = true;
+        self.draw_cursor_cell(true);
+    }
+
+    /// Hide cursor at current position.
+    pub fn cursor_hide(&mut self) {
+        self.blink_on = false;
+        self.draw_cursor_cell(false);
+    }
+
+    /// Called by the timer every ~500 ms to toggle blink state.
+    pub fn tick_cursor(&mut self) {
+        self.blink_on = !self.blink_on;
+        self.draw_cursor_cell(self.blink_on);
     }
 
     // Shift every glyph row up by one, erase the vacated bottom row.
@@ -277,9 +324,13 @@ impl FramebufferWriter {
         }
         self.col = 0;
         self.row = 0;
+        self.blink_on = false;
     }
 
     pub fn backspace(&mut self) {
+        // Erase cursor underline before moving so it doesn't ghost at the old position.
+        self.draw_cursor_cell(false);
+        self.blink_on = false;
         if self.col > 0 {
             self.col -= 1;
         } else if self.row > 0 {
@@ -347,6 +398,23 @@ pub fn _print(args: fmt::Arguments) {
     use fmt::Write;
     if let Some(w) = WRITER.lock().as_mut() {
         let _ = w.write_fmt(args);
+    }
+}
+
+/// Called by the timer ISR every ~500 ms. Uses try_lock so the ISR never
+/// deadlocks if WRITER is already held by a println! in normal code.
+pub fn cursor_tick() {
+    if let Some(mut guard) = WRITER.try_lock() {
+        if let Some(w) = guard.as_mut() {
+            w.tick_cursor();
+        }
+    }
+}
+
+/// Show cursor immediately — called by shell after visual changes.
+pub fn cursor_show() {
+    if let Some(w) = WRITER.lock().as_mut() {
+        w.cursor_show();
     }
 }
 

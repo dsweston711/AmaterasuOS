@@ -59,6 +59,8 @@ static COMMANDS: &[Cmd] = &[
 pub struct Shell {
     buf:         [char; BUF_CAP],
     len:         usize,
+    cursor_pos:  usize, // position within buf (0..=len); used by #79 movement
+    prompt_col:  usize, // screen column where input starts after the prompt
     history:     [[char; BUF_CAP]; HIST_CAP],
     hist_len:    [usize; HIST_CAP],
     hist_count:  usize,
@@ -72,6 +74,8 @@ impl Shell {
         Self {
             buf:         ['\0'; BUF_CAP],
             len:         0,
+            cursor_pos:  0,
+            prompt_col:  0,
             history:     [['\0'; BUF_CAP]; HIST_CAP],
             hist_len:    [0; HIST_CAP],
             hist_count:  0,
@@ -94,15 +98,18 @@ impl Shell {
                 if self.len < BUF_CAP {
                     self.buf[self.len] = ch;
                     self.len += 1;
+                    self.cursor_pos = self.len;
                     crate::print!("{}", ch);
                 }
             }
         }
+        crate::framebuffer::cursor_show();
     }
 
     fn backspace(&mut self) {
-        if self.len == 0 { return; }
+        if self.cursor_pos == 0 { return; }
         self.len -= 1;
+        self.cursor_pos -= 1;
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.backspace();
         }
@@ -115,11 +122,13 @@ impl Shell {
             }
         }
         self.len = 0;
+        self.cursor_pos = 0;
     }
 
     fn ctrl_c(&mut self) {
         crate::println!("^C");
         self.len = 0;
+        self.cursor_pos = 0;
         self.hist_cursor = 0;
         self.print_prompt();
     }
@@ -139,10 +148,12 @@ impl Shell {
         while self.len > 0 && self.buf[self.len - 1] == ' ' {
             if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
             self.len -= 1;
+            self.cursor_pos = self.len;
         }
         while self.len > 0 && self.buf[self.len - 1] != ' ' {
             if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
             self.len -= 1;
+            self.cursor_pos = self.len;
         }
     }
 
@@ -167,6 +178,7 @@ impl Shell {
         self.hist_cursor = 0;
         self.dispatch();
         self.len = 0;
+        self.cursor_pos = 0;
         self.print_prompt();
     }
 
@@ -179,6 +191,7 @@ impl Shell {
         }
         self.hist_cursor += 1;
         self.load_history_entry();
+        crate::framebuffer::cursor_show();
     }
 
     pub fn history_down(&mut self) {
@@ -189,6 +202,7 @@ impl Shell {
         } else {
             self.load_history_entry();
         }
+        crate::framebuffer::cursor_show();
     }
 
     fn load_history_entry(&mut self) {
@@ -197,6 +211,7 @@ impl Shell {
         self.erase_line();
         self.buf[..new_len].copy_from_slice(&self.history[idx][..new_len]);
         self.len = new_len;
+        self.cursor_pos = new_len;
         self.reprint_buf();
     }
 
@@ -204,6 +219,7 @@ impl Shell {
         self.erase_line();
         self.buf[..self.live_len].copy_from_slice(&self.live_buf[..self.live_len]);
         self.len = self.live_len;
+        self.cursor_pos = self.live_len;
         self.reprint_buf();
     }
 
@@ -212,6 +228,7 @@ impl Shell {
             for _ in 0..self.len { w.backspace(); }
         }
         self.len = 0;
+        self.cursor_pos = 0;
     }
 
     fn reprint_buf(&self) {
@@ -704,10 +721,16 @@ impl Shell {
         }
     }
 
-    pub fn print_prompt(&self) {
-        let cwd = CWD.lock();
-        let display = if cwd.is_empty() { "/" } else { cwd.as_str() };
+    pub fn print_prompt(&mut self) {
+        let display = {
+            let cwd = CWD.lock();
+            if cwd.is_empty() { String::from("/") } else { String::from(cwd.as_str()) }
+        };
         crate::print!("amaterasu:{}> ", display);
+        self.prompt_col = if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            w.get_col()
+        } else { 0 };
+        self.cursor_pos = self.len;
     }
 }
 

@@ -13,12 +13,17 @@ const DIVIDE_BY_16:   u32 = 0x3;
 const LVT_MASKED:     u32 = 0x0001_0000;
 const LVT_PERIODIC:   u32 = 0x0002_0000;
 
-static TICK_COUNT:   AtomicU64 = AtomicU64::new(0);
-static TICKS_PER_MS: AtomicU64 = AtomicU64::new(0);
+static TICK_COUNT:    AtomicU64 = AtomicU64::new(0);
+static TICKS_PER_MS:  AtomicU64 = AtomicU64::new(0);
+static BLINK_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // Called from the timer IRQ handler in idt.rs every ~1 ms.
 pub fn tick() {
     TICK_COUNT.fetch_add(1, Ordering::Relaxed);
+    let b = BLINK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if b % 500 == 499 {
+        crate::framebuffer::cursor_tick();
+    }
     crate::apic::end_of_interrupt();
 }
 
