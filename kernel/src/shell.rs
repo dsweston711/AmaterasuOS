@@ -370,6 +370,7 @@ impl Shell {
                         crate::print!("{}", ch);
                     }
                 }
+                self.cursor_pos = self.len;
             }
             _ => {
                 let lcp = longest_common_prefix(&candidates);
@@ -381,6 +382,7 @@ impl Shell {
                             crate::print!("{}", ch);
                         }
                     }
+                    self.cursor_pos = self.len;
                 } else {
                     crate::print!("\n");
                     for c in &candidates { crate::print!("{}  ", c); }
