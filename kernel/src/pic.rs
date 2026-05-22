@@ -82,3 +82,10 @@ pub unsafe fn end_of_interrupt(irq: u8) {
     }
     outb(PIC1_CMD, EOI);
 }
+
+const ACPI_PM1A_CTRL: u16 = 0x0604;
+const ACPI_SLP_S5:    u16 = 0x2000;
+
+pub unsafe fn acpi_power_off() {
+    outw(ACPI_PM1A_CTRL, ACPI_SLP_S5);
+}
