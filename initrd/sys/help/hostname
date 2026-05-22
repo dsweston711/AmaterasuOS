@@ -1,0 +1,8 @@
+hostname
+
+  Print the system hostname.
+
+  The hostname is read from /etc/hostname.
+
+  Examples:
+    hostname
