@@ -105,13 +105,14 @@ impl Shell {
                         self.cursor_pos = self.len;
                         crate::print!("{}", ch);
                     } else {
-                        // Insert in middle: shift right and redraw tail.
+                        // Insert in middle: shift right, paint from the inserted char.
+                        let draw_from = self.cursor_pos;
                         self.buf.copy_within(self.cursor_pos..self.len, self.cursor_pos + 1);
                         self.buf[self.cursor_pos] = ch;
                         self.len += 1;
                         self.cursor_pos += 1;
-                        self.redraw_tail();
-                        return; // redraw_tail calls cursor_show
+                        self.redraw_from(draw_from);
+                        return; // redraw_from calls cursor_show
                     }
                 }
             }
@@ -129,23 +130,23 @@ impl Shell {
                 w.backspace();
             }
         } else {
-            // Delete in middle: shift left and redraw tail.
+            // Delete in middle: shift left, repaint from the deletion point.
             self.buf.copy_within(self.cursor_pos..self.len, self.cursor_pos - 1);
             self.len -= 1;
             self.cursor_pos -= 1;
-            self.redraw_tail();
+            self.redraw_from(self.cursor_pos);
         }
     }
 
-    /// Rewrite buf[cursor_pos..len] on screen from the cursor column,
-    /// append a space to erase the old trailing char (for deletions),
-    /// then reposition the framebuffer cursor back to cursor_pos.
-    fn redraw_tail(&mut self) {
+    /// Repaint buf[from..len] starting at screen column prompt_col+from,
+    /// write a trailing space to erase any stale char (handles deletion),
+    /// then reposition and show the cursor at prompt_col+cursor_pos.
+    fn redraw_from(&mut self, from: usize) {
         if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
-            w.set_col(self.prompt_col + self.cursor_pos);
+            w.set_col(self.prompt_col + from);
         }
-        for i in self.cursor_pos..self.len {
+        for i in from..self.len {
             crate::print!("{}", self.buf[i]);
         }
         crate::print!(" "); // erase stale trailing char after deletion

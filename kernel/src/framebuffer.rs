@@ -250,13 +250,13 @@ impl FramebufferWriter {
         self.col = col.min(self.cols().saturating_sub(1));
     }
 
-    /// Draw (or erase) a two-row underline cursor at the current cell.
+    /// Draw (or erase) a full-cell block cursor at the current cell.
     fn draw_cursor_cell(&mut self, visible: bool) {
-        let px  = self.col * GLYPH_W;
-        let py  = self.row * GLYPH_H;
+        let px    = self.col * GLYPH_W;
+        let py    = self.row * GLYPH_H;
         let color = if visible { self.fg } else { self.bg };
-        let bpp = self.info.bytes_per_pixel;
-        for row_off in (GLYPH_H - 2)..GLYPH_H {
+        let bpp   = self.info.bytes_per_pixel;
+        for row_off in 0..GLYPH_H {
             for col_off in 0..GLYPH_W {
                 let offset = ((py + row_off) * self.info.stride + (px + col_off)) * bpp;
                 if offset + bpp <= self.buffer.len() {
@@ -344,6 +344,9 @@ impl FramebufferWriter {
     }
 
     pub fn write_char(&mut self, ch: char) {
+        // Always erase cursor before writing so it never scrolls with text.
+        self.draw_cursor_cell(false);
+        self.blink_on = false;
         match ch {
             '\n' => {
                 self.col = 0;
