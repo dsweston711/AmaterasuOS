@@ -45,6 +45,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "reboot",   run: Shell::cmd_reboot   },
     Cmd { name: "echo",     run: Shell::cmd_echo     },
     Cmd { name: "uname",    run: Shell::cmd_uname    },
+    Cmd { name: "hostname", run: Shell::cmd_hostname },
     Cmd { name: "shutdown", run: Shell::cmd_shutdown },
     Cmd { name: "help",     run: Shell::cmd_help     },
 ];
@@ -413,6 +414,20 @@ impl Shell {
                 crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
                 crate::vfs::NodeKind::Dir  => cwd_set(resolved),
             },
+        }
+    }
+
+    fn cmd_hostname(&mut self, _: Option<String>) {
+        match crate::vfs::lookup("/etc/hostname") {
+            Some(node) if node.kind() == crate::vfs::NodeKind::File => {
+                let size = node.size();
+                let mut buf = alloc::vec![0u8; size];
+                let n = node.read(&mut buf, 0);
+                if let Ok(s) = core::str::from_utf8(&buf[..n]) {
+                    crate::println!("{}", s.trim());
+                }
+            }
+            _ => crate::println!("amaterasu"),
         }
     }
 
