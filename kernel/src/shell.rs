@@ -43,6 +43,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "pwd",    run: Shell::cmd_pwd    },
     Cmd { name: "cpu",    run: Shell::cmd_cpu    },
     Cmd { name: "reboot",   run: Shell::cmd_reboot   },
+    Cmd { name: "echo",     run: Shell::cmd_echo     },
     Cmd { name: "shutdown", run: Shell::cmd_shutdown },
     Cmd { name: "help",     run: Shell::cmd_help     },
 ];
@@ -411,6 +412,17 @@ impl Shell {
                 crate::vfs::NodeKind::File => crate::println!("cd: not a directory: {}", path),
                 crate::vfs::NodeKind::Dir  => cwd_set(resolved),
             },
+        }
+    }
+
+    fn cmd_echo(&mut self, arg: Option<String>) {
+        let s = arg.unwrap_or_default();
+        let parsed = parse_args(&s);
+        let output = parsed.positional.join(" ");
+        if parsed.has_flag('n') {
+            crate::print!("{}", output);
+        } else {
+            crate::println!("{}", output);
         }
     }
 
