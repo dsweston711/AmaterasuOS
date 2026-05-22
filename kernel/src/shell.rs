@@ -52,6 +52,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "heap",     usage: "heap",                                run: Shell::cmd_heap     },
     Cmd { name: "reboot",   usage: "reboot",                              run: Shell::cmd_reboot   },
     Cmd { name: "shutdown", usage: "shutdown",                            run: Shell::cmd_shutdown },
+    Cmd { name: "history",  usage: "history [n]",                         run: Shell::cmd_history  },
     Cmd { name: "help",     usage: "help [command]",                      run: Shell::cmd_help     },
 ];
 
@@ -651,6 +652,24 @@ impl Shell {
 
     fn cmd_pwd(&mut self, _: Option<String>) {
         crate::println!("{}", cwd_get());
+    }
+
+    fn cmd_history(&mut self, arg: Option<String>) {
+        let available = self.hist_count.min(HIST_CAP);
+        if available == 0 { return; }
+        let limit = match arg {
+            Some(s) => s.trim().parse::<usize>().unwrap_or(available).min(available),
+            None    => available,
+        };
+        let skip = available - limit;
+        let start_slot = (self.hist_count - available + skip) % HIST_CAP;
+        let start_num  =  self.hist_count - available + skip + 1;
+        for i in 0..limit {
+            let slot = (start_slot + i) % HIST_CAP;
+            let len  = self.hist_len[slot];
+            let s: String = self.history[slot][..len].iter().collect();
+            crate::println!("{:4}  {}", start_num + i, s);
+        }
     }
 
     fn cmd_help(&mut self, arg: Option<String>) {
