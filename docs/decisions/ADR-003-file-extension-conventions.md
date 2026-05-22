@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-20
 
-**Status:** Accepted
+**Status:** Superseded by ADR-012
 
 **Issue:** #14
 
