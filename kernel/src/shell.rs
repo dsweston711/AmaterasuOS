@@ -49,6 +49,7 @@ static COMMANDS: &[Cmd] = &[
     Cmd { name: "wc",       run: Shell::cmd_wc       },
     Cmd { name: "head",     run: Shell::cmd_head     },
     Cmd { name: "tail",     run: Shell::cmd_tail     },
+    Cmd { name: "grep",     run: Shell::cmd_grep     },
     Cmd { name: "shutdown", run: Shell::cmd_shutdown },
     Cmd { name: "help",     run: Shell::cmd_help     },
 ];
@@ -418,6 +419,45 @@ impl Shell {
                 crate::vfs::NodeKind::Dir  => cwd_set(resolved),
             },
         }
+    }
+
+    fn cmd_grep(&mut self, arg: Option<String>) {
+        let s = match arg {
+            Some(s) => s,
+            None    => { crate::println!("usage: grep [-i] [-n] [-c] <pattern> <file>"); return; }
+        };
+        let parsed = parse_args(&s);
+        let pattern = match parsed.get(0) {
+            Some(p) => String::from(p),
+            None    => { crate::println!("usage: grep [-i] [-n] [-c] <pattern> <file>"); return; }
+        };
+        let path = match parsed.get(1) {
+            Some(p) => normalize(&resolve(p)),
+            None    => { crate::println!("usage: grep [-i] [-n] [-c] <pattern> <file>"); return; }
+        };
+        let content = match read_file_str(&path) {
+            Some(c) => c,
+            None    => { crate::println!("grep: {}: not found", path); return; }
+        };
+        let case_insensitive = parsed.has_flag('i');
+        let show_numbers     = parsed.has_flag('n');
+        let count_only       = parsed.has_flag('c');
+        let pat_lower = if case_insensitive { pattern.to_lowercase() } else { pattern.clone() };
+        let mut matches: usize = 0;
+        for (i, line) in content.lines().enumerate() {
+            let haystack = if case_insensitive { line.to_lowercase() } else { String::from(line) };
+            if haystack.contains(pat_lower.as_str()) {
+                matches += 1;
+                if !count_only {
+                    if show_numbers {
+                        crate::println!("{}:{}", i + 1, line);
+                    } else {
+                        crate::println!("{}", line);
+                    }
+                }
+            }
+        }
+        if count_only { crate::println!("{}", matches); }
     }
 
     fn cmd_tail(&mut self, arg: Option<String>) {
