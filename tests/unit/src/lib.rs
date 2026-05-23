@@ -55,21 +55,33 @@ fn edit_distance(a: &[char], b: &str) -> usize {
     row[n]
 }
 
-// ── split_semicolons (kernel/src/shell.rs) ───────────────────────────────────
+// ── split_commands (kernel/src/shell.rs) ─────────────────────────────────────
 
-fn split_semicolons(input: &str) -> Vec<&str> {
+fn split_commands(input: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut in_quote: Option<char> = None;
     let mut start = 0;
-    for (i, ch) in input.char_indices() {
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (byte_pos, ch) = chars[i];
         match in_quote {
-            Some(q) if ch == q => in_quote = None,
-            Some(_)            => {}
+            Some(q) if ch == q => { in_quote = None; i += 1; }
+            Some(_)            => { i += 1; }
             None => match ch {
-                '"' | '\'' => in_quote = Some(ch),
-                ';' => { out.push(&input[start..i]); start = i + 1; }
-                _   => {}
-            },
+                '"' | '\'' => { in_quote = Some(ch); i += 1; }
+                ';' => {
+                    out.push(&input[start..byte_pos]);
+                    start = byte_pos + 1;
+                    i += 1;
+                }
+                '&' if i + 1 < chars.len() && chars[i + 1].1 == '&' => {
+                    out.push(&input[start..byte_pos]);
+                    start = chars[i + 1].0 + 1;
+                    i += 2;
+                }
+                _ => { i += 1; }
+            }
         }
     }
     out.push(&input[start..]);
@@ -170,29 +182,60 @@ mod tests {
         assert_eq!(edit_distance(&a, "ls"), 2);
     }
 
-    // split_semicolons
+    // split_commands
 
     #[test]
     fn split_single_cmd() {
-        assert_eq!(split_semicolons("ls"), vec!["ls"]);
+        assert_eq!(split_commands("ls"), vec!["ls"]);
     }
 
     #[test]
-    fn split_two_cmds() {
-        assert_eq!(split_semicolons("ls;pwd"), vec!["ls", "pwd"]);
+    fn split_two_cmds_semicolon() {
+        assert_eq!(split_commands("ls;pwd"), vec!["ls", "pwd"]);
     }
 
     #[test]
     fn split_semicolon_in_quotes_ignored() {
         assert_eq!(
-            split_semicolons(r#"echo "a;b""#),
+            split_commands(r#"echo "a;b""#),
             vec![r#"echo "a;b""#]
         );
     }
 
     #[test]
     fn split_trailing_semicolon() {
-        assert_eq!(split_semicolons("ls;"), vec!["ls", ""]);
+        assert_eq!(split_commands("ls;"), vec!["ls", ""]);
+    }
+
+    #[test]
+    fn split_two_cmds_and_and() {
+        assert_eq!(split_commands("ls&&pwd"), vec!["ls", "pwd"]);
+    }
+
+    #[test]
+    fn split_and_and_with_spaces() {
+        assert_eq!(split_commands("cd /sys && pwd"), vec!["cd /sys ", " pwd"]);
+    }
+
+    #[test]
+    fn split_and_and_in_quotes_ignored() {
+        assert_eq!(
+            split_commands(r#"echo "a&&b""#),
+            vec![r#"echo "a&&b""#]
+        );
+    }
+
+    #[test]
+    fn split_single_ampersand_not_split() {
+        assert_eq!(split_commands("echo a&b"), vec!["echo a&b"]);
+    }
+
+    #[test]
+    fn split_mixed_separators() {
+        assert_eq!(
+            split_commands("echo a ; echo b && echo c"),
+            vec!["echo a ", " echo b ", " echo c"]
+        );
     }
 
     // tilde_expand

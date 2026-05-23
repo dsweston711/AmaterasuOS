@@ -398,7 +398,7 @@ impl Shell {
 
     fn dispatch(&mut self) {
         let input: String = self.buf[..self.len].iter().collect();
-        let segments = split_semicolons(&input);
+        let segments = split_commands(&input);
         for seg in segments {
             let seg = seg.trim();
             if seg.is_empty() { continue; }
@@ -662,20 +662,33 @@ pub(crate) fn parse_args(input: &str) -> ParsedArgs {
     ParsedArgs { flags, flag_vals, positional }
 }
 
-/// Split on `;` outside of quoted spans; returns each segment as a &str.
-fn split_semicolons(input: &str) -> Vec<&str> {
+/// Split on `;` or `&&` outside of quoted spans; returns each segment as a &str.
+/// `&&` is treated as unconditional chaining (commands have no exit-status return).
+fn split_commands(input: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut in_quote: Option<char> = None;
     let mut start = 0;
-    for (i, ch) in input.char_indices() {
+    let chars: Vec<(usize, char)> = input.char_indices().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let (byte_pos, ch) = chars[i];
         match in_quote {
-            Some(q) if ch == q => in_quote = None,
-            Some(_)            => {}
+            Some(q) if ch == q => { in_quote = None; i += 1; }
+            Some(_)            => { i += 1; }
             None => match ch {
-                '"' | '\'' => in_quote = Some(ch),
-                ';' => { out.push(&input[start..i]); start = i + 1; }
-                _   => {}
-            },
+                '"' | '\'' => { in_quote = Some(ch); i += 1; }
+                ';' => {
+                    out.push(&input[start..byte_pos]);
+                    start = byte_pos + 1;
+                    i += 1;
+                }
+                '&' if i + 1 < chars.len() && chars[i + 1].1 == '&' => {
+                    out.push(&input[start..byte_pos]);
+                    start = chars[i + 1].0 + 1;
+                    i += 2;
+                }
+                _ => { i += 1; }
+            }
         }
     }
     out.push(&input[start..]);
