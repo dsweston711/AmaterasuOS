@@ -6,7 +6,7 @@ OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd
 OVMF      := /usr/share/ovmf/OVMF.fd
 
-.PHONY: all kernel initrd image run run-uefi clean test test-unit test-integration
+.PHONY: all kernel initrd image run run-uefi usb clean test test-unit test-integration
 
 all: image
 
@@ -50,6 +50,30 @@ run-uefi: image
 		-serial stdio \
 		-no-reboot \
 		-m 128M
+
+usb: image
+	@if [ -z "$(DEV)" ]; then \
+		echo "Usage: make usb DEV=/dev/sdX"; \
+		echo ""; \
+		echo "Available block devices:"; \
+		lsblk -d -o NAME,SIZE,MODEL 2>/dev/null || lsblk -d -o NAME,SIZE; \
+		exit 1; \
+	fi
+	@if [ ! -b "$(DEV)" ]; then \
+		echo "ERROR: $(DEV) is not a block device."; \
+		exit 1; \
+	fi
+	@echo "Target:  $(DEV)"
+	@lsblk -d -o NAME,SIZE,MODEL "$(DEV)" 2>/dev/null || lsblk -d -o NAME,SIZE "$(DEV)"
+	@echo "Image:   $(UEFI_IMG)  ($$(du -h $(UEFI_IMG) | cut -f1))"
+	@echo ""
+	@echo "WARNING: This will OVERWRITE $(DEV). All data on it will be lost."
+	@echo "Press Ctrl+C within 5 seconds to abort..."
+	@sleep 5
+	sudo dd if=$(UEFI_IMG) of=$(DEV) bs=4M status=progress conv=fsync
+	sudo sync
+	@echo ""
+	@echo "Done. Safely eject $(DEV), then boot from it on real hardware."
 
 test: test-unit test-integration
 
