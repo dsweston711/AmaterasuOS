@@ -4,7 +4,7 @@ A bare-metal x86_64 operating system written in Rust, optimized for boot time.
 
 **Goal:** Power button to usable shell in under 3 seconds on real x86_64 UEFI hardware.
 
-**Status:** Pre-alpha. Boots via UEFI/OVMF in QEMU with an interactive shell and ~20 built-in commands. UEFI boot path verified end-to-end. Next milestone: bootable USB image for first real-hardware boot.
+**Status:** Pre-alpha. Boots via UEFI/OVMF in QEMU with an interactive shell and ~20 built-in commands. UEFI boot path verified end-to-end. USB write tooling in place. Next milestone: first real-hardware boot.
 
 ## Requirements
 
@@ -25,6 +25,29 @@ make run-uefi
 ```
 
 Both targets build the kernel and disk image automatically before launching QEMU. Serial output — boot timing markers and any panic info — streams to your terminal.
+
+## Real hardware
+
+To boot AmaterasuOS on a physical x86_64 machine:
+
+**1. Identify your USB drive:**
+```
+lsblk -d -o NAME,SIZE,MODEL
+```
+
+**2. Write the image** (replace `/dev/sdX` with your drive — double-check before confirming):
+```
+make usb DEV=/dev/sdX
+```
+The target builds the UEFI image, shows device info and a 5-second countdown, then writes with `dd` and flushes with `sync`. Ctrl+C during the countdown aborts safely.
+
+**3. Configure UEFI firmware** (one-time, on the target machine):
+- Secure Boot: **Disabled**
+- Fast Boot: **Disabled**
+- USB Legacy Support / USB Keyboard Support: **Enabled** (required for keyboard input)
+- Boot from USB (F12 / F11 / Esc one-time boot menu on most boards)
+
+The kernel prints boot timing to serial and paints the shell to the framebuffer. Serial output is the most reliable diagnostic channel if the display is blank.
 
 ## Testing
 
