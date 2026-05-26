@@ -3,7 +3,7 @@ use crate::shell::Shell;
 
 impl Shell {
     pub(crate) fn cmd_clear(&mut self, _: Option<String>) {
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.clear();
         }
     }
@@ -13,9 +13,9 @@ impl Shell {
         let parsed = crate::shell::parse_args(&s);
         let output = parsed.positional.join(" ");
         if parsed.has_flag('n') {
-            crate::print!("{}", output);
+            print!("{}", output);
         } else {
-            crate::println!("{}", output);
+            println!("{}", output);
         }
     }
 
@@ -33,27 +33,27 @@ impl Shell {
             let slot = (start_slot + i) % crate::shell::HIST_CAP;
             let len  = self.hist_len[slot];
             let s: String = self.history[slot][..len].iter().collect();
-            crate::println!("{:4}  {}", start_num + i, s);
+            println!("{:4}  {}", start_num + i, s);
         }
     }
 
     pub(crate) fn cmd_help(&mut self, arg: Option<String>) {
         match arg {
             None => {
-                crate::println!("AmaterasuOS -- available commands\n");
+                println!("AmaterasuOS -- available commands\n");
                 for cmd in crate::shell::COMMANDS {
-                    crate::println!("  {}", cmd.usage);
+                    println!("  {}", cmd.usage);
                 }
-                crate::println!("\nType 'help <command>' for detailed usage.");
-                crate::println!("Type 'help tab' for tab completion tips.");
+                println!("\nType 'help <command>' for detailed usage.");
+                println!("Type 'help tab' for tab completion tips.");
             }
             Some(cmd_name) => {
                 let path = alloc::format!("/sys/help/{}", cmd_name);
                 if !crate::shell::print_file(&path) {
                     if let Some(entry) = crate::shell::COMMANDS.iter().find(|e| e.name == cmd_name.as_str()) {
-                        crate::println!("{}", entry.usage);
+                        println!("{}", entry.usage);
                     } else {
-                        crate::println!("no help found for {}", cmd_name);
+                        println!("no help found for {}", cmd_name);
                     }
                 }
             }
@@ -66,7 +66,7 @@ impl Shell {
                 let mut vars = crate::env::list();
                 vars.sort_unstable_by(|a, b| a.0.cmp(&b.0));
                 for (k, v) in vars {
-                    crate::println!("{}={}", k, v);
+                    println!("{}={}", k, v);
                 }
             }
             Some(s) => {
@@ -80,12 +80,12 @@ impl Shell {
                     let mut vars = crate::env::list();
                     vars.sort_unstable_by(|a, b| a.0.cmp(&b.0));
                     for (k, v) in vars {
-                        crate::println!("{}={}", k, v);
+                        println!("{}={}", k, v);
                     }
                 } else {
                     match crate::env::get(&s) {
-                        Some(v) => crate::println!("{}={}", s, v),
-                        None    => crate::println!("export: {}: not set", s),
+                        Some(v) => println!("{}={}", s, v),
+                        None    => println!("export: {}: not set", s),
                     }
                 }
             }
