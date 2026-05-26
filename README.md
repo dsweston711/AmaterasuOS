@@ -14,26 +14,40 @@ A bare-metal x86_64 operating system written in Rust, optimized for boot time.
 
 ## Build & Run
 
-**BIOS boot (quick iteration):**
 ```
 make run
 ```
 
-**UEFI boot (matches real hardware path):**
-```
-make run-uefi
-```
-
-Both targets build the kernel and disk image automatically before launching QEMU. Serial output — boot timing markers and any panic info — streams to your terminal.
+Builds the kernel and UEFI disk image, then boots in QEMU via OVMF. Serial output — boot timing markers and any panic info — streams to your terminal.
 
 ## Real hardware
 
 To boot AmaterasuOS on a physical x86_64 machine:
 
+**If developing on WSL2 — attach the USB drive first:**
+
+WSL2 doesn't see USB devices by default. Use [usbipd-win](https://github.com/dorssel/usbipd-win) to pass the drive through:
+
+1. Install usbipd-win on Windows (winget or MSI from the releases page)
+2. Plug in the USB drive
+3. In an **admin** PowerShell, bind the device (one-time per device):
+   ```
+   usbipd list
+   usbipd bind --busid <busid>
+   ```
+4. Attach it to WSL2 (each session):
+   ```
+   usbipd attach --wsl --busid <busid>
+   ```
+5. The drive now appears as `/dev/sdX` inside WSL2 — proceed with the steps below
+
+---
+
 **1. Identify your USB drive:**
 ```
 lsblk -d -o NAME,SIZE,MODEL
 ```
+Match on size and model name — the USB drive will be the only non-virtual disk.
 
 **2. Write the image** (replace `/dev/sdX` with your drive — double-check before confirming):
 ```
