@@ -2,7 +2,7 @@ use spin::Once;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 use crate::keyboard::keyboard_handler;
-use crate::timer::TIMER_VECTOR;
+use hal::timer::TIMER_VECTOR;
 
 pub const KBD_VECTOR:      u8 = 0x21; // keyboard routed here by I/O APIC
 pub const SPURIOUS_VECTOR: u8 = 0xFF; // LAPIC spurious interrupt vector
@@ -24,7 +24,7 @@ pub fn init() {
 }
 
 extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
-    crate::timer::tick();
+    hal::timer::tick();
 }
 
 // Spurious LAPIC interrupts require no EOI — just return.

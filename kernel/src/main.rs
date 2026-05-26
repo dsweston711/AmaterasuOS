@@ -4,22 +4,19 @@
 
 extern crate alloc;
 
-mod acpi;
+// Bring hal's print!/println!/serial_print!/serial_println! into scope for the
+// entire kernel binary without per-file use statements.
+#[macro_use]
+extern crate hal;
+
 mod allocator;
-mod apic;
 mod cmd;
 mod env;
-mod cpu;
-mod timer;
-mod framebuffer;
 mod idt;
 mod keyboard;
 mod memory;
-mod pic;
 mod ramfs;
-mod serial;
 mod shell;
-mod time;
 mod vfs;
 
 use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
@@ -35,27 +32,27 @@ pub static BOOTLOADER_CONFIG: BootloaderConfig = {
 entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
 
 fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
-    let t0 = time::rdtsc();
+    let t0 = hal::time::rdtsc();
 
-    serial::SERIAL1.lock().init();
-    let t_serial = time::rdtsc();
-    time::calibrate(); // PIT-based TSC calibration (~10 ms); must precede cycles_to_ns
+    hal::serial::SERIAL1.lock().init();
+    let t_serial = hal::time::rdtsc();
+    hal::time::calibrate(); // PIT-based TSC calibration (~10 ms); must precede cycles_to_ns
     serial_println!("AmaterasuOS booting...");
     serial_println!("[BOOT] t0={} (baseline)", t0);
-    serial_println!("[BOOT] TSC:              {} MHz", time::tsc_mhz());
-    serial_println!("[BOOT] serial_init:      +{} ns", time::cycles_to_ns(t_serial - t0));
+    serial_println!("[BOOT] TSC:              {} MHz", hal::time::tsc_mhz());
+    serial_println!("[BOOT] serial_init:      +{} ns", hal::time::cycles_to_ns(t_serial - t0));
 
     let phys_offset = boot_info.physical_memory_offset
         .into_option()
         .expect("physical memory mapping not provided") as usize;
 
     memory::init(&boot_info.memory_regions, phys_offset);
-    let t_mem = time::rdtsc();
-    serial_println!("[BOOT] memory_init:      +{} ns", time::cycles_to_ns(t_mem - t0));
+    let t_mem = hal::time::rdtsc();
+    serial_println!("[BOOT] memory_init:      +{} ns", hal::time::cycles_to_ns(t_mem - t0));
 
     allocator::init(memory::heap_start_virt(), memory::heap_size());
-    let t_alloc = time::rdtsc();
-    serial_println!("[BOOT] allocator_init:   +{} ns", time::cycles_to_ns(t_alloc - t0));
+    let t_alloc = hal::time::rdtsc();
+    serial_println!("[BOOT] allocator_init:   +{} ns", hal::time::cycles_to_ns(t_alloc - t0));
 
     let rd_addr = boot_info.ramdisk_addr.into_option().unwrap_or(0);
     let rd_len  = boot_info.ramdisk_len as usize;
@@ -63,12 +60,12 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     env::init();
 
     if let Some(rsdp_phys) = boot_info.rsdp_addr.into_option() {
-        acpi::init(rsdp_phys, phys_offset);
+        hal::acpi::init(rsdp_phys, phys_offset);
     } else {
         serial_println!("[ACPI] no RSDP address from bootloader");
     }
-    let t_acpi = time::rdtsc();
-    serial_println!("[BOOT] acpi_init:        +{} ns", time::cycles_to_ns(t_acpi - t0));
+    let t_acpi = hal::time::rdtsc();
+    serial_println!("[BOOT] acpi_init:        +{} ns", hal::time::cycles_to_ns(t_acpi - t0));
 
     if let Some(fb) = boot_info.framebuffer.as_mut() {
         let info = fb.info();
@@ -78,27 +75,27 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
             *byte = 0x00;
         }
 
-        *framebuffer::WRITER.lock() =
-            Some(framebuffer::FramebufferWriter::new(buffer, info));
+        *hal::framebuffer::WRITER.lock() =
+            Some(hal::framebuffer::FramebufferWriter::new(buffer, info));
     }
-    let t_fb = time::rdtsc();
-    serial_println!("[BOOT] framebuffer_init: +{} ns", time::cycles_to_ns(t_fb - t0));
+    let t_fb = hal::time::rdtsc();
+    serial_println!("[BOOT] framebuffer_init: +{} ns", hal::time::cycles_to_ns(t_fb - t0));
 
     if !shell::print_file("/sys/welcome") {
         println!("AmaterasuOS");
     }
 
-    unsafe { pic::remap(); } // move PIC vectors to 0x20-0x2F before disabling
-    apic::init();            // mask PIC, enable LAPIC + I/O APIC, route keyboard
-    let t_apic = time::rdtsc();
-    serial_println!("[BOOT] apic_init:        +{} ns", time::cycles_to_ns(t_apic - t0));
+    unsafe { hal::pic::remap(); } // move PIC vectors to 0x20-0x2F before disabling
+    hal::apic::init(phys_offset); // mask PIC, enable LAPIC + I/O APIC, route keyboard
+    let t_apic = hal::time::rdtsc();
+    serial_println!("[BOOT] apic_init:        +{} ns", hal::time::cycles_to_ns(t_apic - t0));
 
     idt::init();
     unsafe { core::arch::asm!("sti"); }
 
-    timer::init(); // calibrate LAPIC timer and start 1 ms periodic IRQ
-    let t_done = time::rdtsc();
-    serial_println!("[BOOT] kernel_ready:     +{} ns (total)", time::cycles_to_ns(t_done - t0));
+    hal::timer::init(); // calibrate LAPIC timer and start 1 ms periodic IRQ
+    let t_done = hal::time::rdtsc();
+    serial_println!("[BOOT] kernel_ready:     +{} ns (total)", hal::time::cycles_to_ns(t_done - t0));
 
     shell::prompt();
 
@@ -110,8 +107,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     unsafe {
-        serial::SERIAL1.force_unlock();
-        framebuffer::WRITER.force_unlock();
+        hal::serial::SERIAL1.force_unlock();
+        hal::framebuffer::WRITER.force_unlock();
     }
 
     serial_println!("\n--- KERNEL PANIC ---");
@@ -121,7 +118,7 @@ fn panic(info: &PanicInfo) -> ! {
     serial_println!("Message:  {}", info.message());
     serial_println!("--------------------");
 
-    if let Some(w) = framebuffer::WRITER.lock().as_mut() {
+    if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
         w.set_colors([0xFF, 0xFF, 0xFF], [0xCC, 0x00, 0x00]);
         w.clear();
     }

@@ -22,12 +22,7 @@ image: kernel $(INITRD)
 	KERNEL_PATH=$(KERNEL) RAMDISK_PATH=$(INITRD) OUT_DIR=target \
 		cargo run --package boot
 
-run: image
-	qemu-system-x86_64 \
-		-drive format=raw,file=$(BIOS_IMG) \
-		-serial stdio \
-		-m 128M \
-		-no-reboot
+run: run-uefi
 
 run-uefi: image
 	@if [ ! -f "$(OVMF_CODE)" ] && [ ! -f "$(OVMF)" ]; then \

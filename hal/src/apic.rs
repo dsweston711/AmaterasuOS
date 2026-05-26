@@ -42,8 +42,7 @@ pub fn end_of_interrupt() {
     unsafe { lapic_write(LAPIC_EOI, 0); }
 }
 
-pub fn init() {
-    let phys_off = crate::memory::phys_offset();
+pub fn init(phys_off: usize) {
 
     let info = crate::acpi::get()
         .expect("apic::init requires ApicInfo from acpi::init");
