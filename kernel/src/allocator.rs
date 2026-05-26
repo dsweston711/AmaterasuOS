@@ -191,7 +191,7 @@ static ALLOCATOR: LockedAllocator = LockedAllocator(Mutex::new(SlabAllocator::ne
 
 pub fn init(heap_virt: usize, heap_size: usize) {
     ALLOCATOR.0.lock().init(heap_virt, heap_size);
-    crate::serial_println!(
+    serial_println!(
         "[ALLOC] heap {:#012x}, {} MB | slabs: {:?} x{} ({} KB) | bump: {} KB",
         heap_virt,
         heap_size / (1024 * 1024),

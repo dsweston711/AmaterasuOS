@@ -153,8 +153,8 @@ pub fn scancode_to_char(scancode: u8, shift: bool, caps_lock: bool) -> Option<ch
 
 pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
     unsafe {
-        let scancode = crate::pic::inb(0x60);
-        crate::apic::end_of_interrupt();
+        let scancode = hal::pic::inb(0x60);
+        hal::apic::end_of_interrupt();
 
         // 0xE0 prefix marks an extended two-byte sequence. Bit 7 is set so it
         // would be swallowed by the break-code filter below — handle it first.

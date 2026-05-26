@@ -184,7 +184,7 @@ impl VNode for DirRef {
 
 pub fn init(ramdisk_addr: u64, ramdisk_len: usize, phys_off: usize) {
     if ramdisk_len == 0 {
-        crate::serial_println!("[RAMFS] no ramdisk provided");
+        serial_println!("[RAMFS] no ramdisk provided");
         return;
     }
 
@@ -196,12 +196,12 @@ pub fn init(ramdisk_addr: u64, ramdisk_len: usize, phys_off: usize) {
     let (slice, virt) = match slice {
         Some(v) => v,
         None => {
-            crate::serial_println!("[RAMFS] ERROR: no valid ustar magic found");
+            serial_println!("[RAMFS] ERROR: no valid ustar magic found");
             return;
         }
     };
 
-    crate::serial_println!(
+    serial_println!(
         "[RAMFS] ramdisk at virt {:#010x} ({} bytes)",
         virt, ramdisk_len
     );
@@ -258,6 +258,6 @@ fn parse_ustar(data: &'static [u8]) -> Vec<(String, Node)> {
         offset += (size + BLOCK - 1) / BLOCK * BLOCK;
     }
 
-    crate::serial_println!("[RAMFS] mounted: {} file(s) in ramdisk", file_count);
+    serial_println!("[RAMFS] mounted: {} file(s) in ramdisk", file_count);
     root
 }

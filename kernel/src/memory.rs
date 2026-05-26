@@ -10,7 +10,7 @@ static PHYS_OFFSET: AtomicUsize = AtomicUsize::new(0);
 /// and anchor the heap at the first usable region large enough to hold HEAP_SIZE.
 pub fn init(regions: &MemoryRegions, phys_offset: usize) {
     PHYS_OFFSET.store(phys_offset, Ordering::Relaxed);
-    crate::serial_println!("[MEM] Usable memory regions:");
+    serial_println!("[MEM] Usable memory regions:");
 
     let mut heap_found = false;
 
@@ -19,7 +19,7 @@ pub fn init(regions: &MemoryRegions, phys_offset: usize) {
             continue;
         }
         let size = region.end - region.start;
-        crate::serial_println!(
+        serial_println!(
             "[MEM]   {:#012x}..{:#012x}  ({} KB)",
             region.start, region.end, size / 1024
         );
@@ -27,7 +27,7 @@ pub fn init(regions: &MemoryRegions, phys_offset: usize) {
         if !heap_found && size >= HEAP_SIZE as u64 {
             HEAP_PHYS.store(region.start, Ordering::Relaxed);
             heap_found = true;
-            crate::serial_println!(
+            serial_println!(
                 "[MEM] Heap reserved: {:#012x} + {} MB (virt {:#012x})",
                 region.start,
                 HEAP_SIZE / (1024 * 1024),

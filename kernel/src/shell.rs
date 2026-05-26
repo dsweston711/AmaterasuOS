@@ -108,7 +108,7 @@ impl Shell {
                         self.buf[self.len] = ch;
                         self.len += 1;
                         self.cursor_pos = self.len;
-                        crate::print!("{}", ch);
+                        print!("{}", ch);
                     } else {
                         // Insert in middle: shift right, paint from the inserted char.
                         let draw_from = self.cursor_pos;
@@ -122,7 +122,7 @@ impl Shell {
                 }
             }
         }
-        crate::framebuffer::cursor_show(self.cursor_char());
+        hal::framebuffer::cursor_show(self.cursor_char());
     }
 
     fn backspace(&mut self) {
@@ -131,7 +131,7 @@ impl Shell {
             // Fast path: delete at end.
             self.len -= 1;
             self.cursor_pos -= 1;
-            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
                 w.backspace();
             }
         } else {
@@ -147,15 +147,15 @@ impl Shell {
     /// write a trailing space to erase any stale char (handles deletion),
     /// then reposition and show the cursor at prompt_col+cursor_pos.
     fn redraw_from(&mut self, from: usize) {
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + from);
         }
         for i in from..self.len {
-            crate::print!("{}", self.buf[i]);
+            print!("{}", self.buf[i]);
         }
-        crate::print!(" "); // erase stale trailing char after deletion
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        print!(" "); // erase stale trailing char after deletion
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.set_col(self.prompt_col + self.cursor_pos);
             let ch = self.cursor_char();
             w.cursor_show(ch);
@@ -165,7 +165,7 @@ impl Shell {
     pub fn cursor_left(&mut self) {
         if self.cursor_pos == 0 { return; }
         self.cursor_pos -= 1;
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + self.cursor_pos);
             w.cursor_show(self.cursor_char());
@@ -175,7 +175,7 @@ impl Shell {
     pub fn cursor_right(&mut self) {
         if self.cursor_pos == self.len { return; }
         self.cursor_pos += 1;
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + self.cursor_pos);
             w.cursor_show(self.cursor_char());
@@ -184,7 +184,7 @@ impl Shell {
 
     pub fn cursor_to_start(&mut self) {
         self.cursor_pos = 0;
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col);
             w.cursor_show(self.cursor_char());
@@ -193,7 +193,7 @@ impl Shell {
 
     pub fn cursor_to_end(&mut self) {
         self.cursor_pos = self.len;
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.cursor_hide();
             w.set_col(self.prompt_col + self.len);
             w.cursor_show(self.cursor_char());
@@ -202,7 +202,7 @@ impl Shell {
 
     fn clear_line(&mut self) {
         for _ in 0..self.len {
-            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+            if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
                 w.backspace();
             }
         }
@@ -211,7 +211,7 @@ impl Shell {
     }
 
     fn ctrl_c(&mut self) {
-        crate::println!("^C");
+        println!("^C");
         self.len = 0;
         self.cursor_pos = 0;
         self.hist_cursor = 0;
@@ -219,25 +219,25 @@ impl Shell {
     }
 
     fn ctrl_l(&mut self) {
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.clear();
         }
         self.print_prompt();
         for i in 0..self.len {
-            crate::print!("{}", self.buf[i]);
+            print!("{}", self.buf[i]);
         }
-        crate::framebuffer::cursor_show(self.cursor_char());
+        hal::framebuffer::cursor_show(self.cursor_char());
     }
 
     fn ctrl_w(&mut self) {
         // delete back through trailing whitespace then through the preceding word
         while self.len > 0 && self.buf[self.len - 1] == ' ' {
-            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
+            if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
             self.len -= 1;
             self.cursor_pos = self.len;
         }
         while self.len > 0 && self.buf[self.len - 1] != ' ' {
-            if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
+            if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() { w.backspace(); }
             self.len -= 1;
             self.cursor_pos = self.len;
         }
@@ -248,7 +248,7 @@ impl Shell {
     }
 
     fn submit(&mut self) {
-        crate::print!("\n");
+        print!("\n");
         if self.len > 0 {
             let last_slot = self.hist_count.wrapping_sub(1) % HIST_CAP;
             let is_dup = self.hist_count > 0
@@ -277,7 +277,7 @@ impl Shell {
         }
         self.hist_cursor += 1;
         self.load_history_entry();
-        crate::framebuffer::cursor_show(self.cursor_char());
+        hal::framebuffer::cursor_show(self.cursor_char());
     }
 
     pub fn history_down(&mut self) {
@@ -288,7 +288,7 @@ impl Shell {
         } else {
             self.load_history_entry();
         }
-        crate::framebuffer::cursor_show(self.cursor_char());
+        hal::framebuffer::cursor_show(self.cursor_char());
     }
 
     fn load_history_entry(&mut self) {
@@ -310,7 +310,7 @@ impl Shell {
     }
 
     fn erase_line(&mut self) {
-        if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             for _ in 0..self.len { w.backspace(); }
         }
         self.len = 0;
@@ -318,7 +318,7 @@ impl Shell {
     }
 
     fn reprint_buf(&self) {
-        for i in 0..self.len { crate::print!("{}", self.buf[i]); }
+        for i in 0..self.len { print!("{}", self.buf[i]); }
     }
 
     fn complete(&mut self) {
@@ -368,7 +368,7 @@ impl Shell {
                     if self.len < BUF_CAP {
                         self.buf[self.len] = ch;
                         self.len += 1;
-                        crate::print!("{}", ch);
+                        print!("{}", ch);
                     }
                 }
                 self.cursor_pos = self.len;
@@ -380,17 +380,17 @@ impl Shell {
                         if self.len < BUF_CAP {
                             self.buf[self.len] = ch;
                             self.len += 1;
-                            crate::print!("{}", ch);
+                            print!("{}", ch);
                         }
                     }
                     self.cursor_pos = self.len;
                 } else {
-                    crate::print!("\n");
-                    for c in &candidates { crate::print!("{}  ", c); }
-                    crate::print!("\n");
+                    print!("\n");
+                    for c in &candidates { print!("{}  ", c); }
+                    print!("\n");
                     self.print_prompt();
                     self.reprint_buf();
-                    crate::framebuffer::cursor_show(self.cursor_char());
+                    hal::framebuffer::cursor_show(self.cursor_char());
                 }
             }
         }
@@ -424,7 +424,7 @@ impl Shell {
         }
 
         let typed: String = cmd.iter().collect();
-        crate::print!("unknown command: {}", typed);
+        print!("unknown command: {}", typed);
         let prefix_match = COMMANDS.iter().find(|e| e.name.starts_with(typed.as_str()));
         let suggestion = if let Some(entry) = prefix_match {
             Some(entry.name)
@@ -438,9 +438,9 @@ impl Shell {
             if best_dist <= 2 { Some(best_name) } else { None }
         };
         if let Some(name) = suggestion {
-            crate::println!(" -- did you mean '{}'?", name);
+            println!(" -- did you mean '{}'?", name);
         } else {
-            crate::println!();
+            println!();
         }
     }
 
@@ -449,16 +449,16 @@ impl Shell {
             let cwd = CWD.lock();
             if cwd.is_empty() { String::from("/") } else { String::from(cwd.as_str()) }
         };
-        crate::print!("amaterasu:");
-        crate::framebuffer::set_fg(crate::framebuffer::COLOR_PROMPT);
-        crate::print!("{}", display);
-        crate::framebuffer::reset_colors();
-        crate::print!("> ");
-        self.prompt_col = if let Some(w) = crate::framebuffer::WRITER.lock().as_mut() {
+        print!("amaterasu:");
+        hal::framebuffer::set_fg(hal::framebuffer::COLOR_PROMPT);
+        print!("{}", display);
+        hal::framebuffer::reset_colors();
+        print!("> ");
+        self.prompt_col = if let Some(w) = hal::framebuffer::WRITER.lock().as_mut() {
             w.get_col()
         } else { 0 };
         self.cursor_pos = self.len;
-        crate::framebuffer::cursor_show(self.cursor_char());
+        hal::framebuffer::cursor_show(self.cursor_char());
     }
 }
 
@@ -514,8 +514,8 @@ pub(crate) fn print_file(path: &str) -> bool {
                 let mut buf = alloc::vec![0u8; size];
                 let n = node.read(&mut buf, 0);
                 if let Ok(s) = core::str::from_utf8(&buf[..n]) {
-                    crate::print!("{}", s);
-                    if !s.ends_with('\n') { crate::print!("\n"); }
+                    print!("{}", s);
+                    if !s.ends_with('\n') { print!("\n"); }
                 }
             }
             true
