@@ -24,6 +24,17 @@ pub fn init() {
 }
 
 extern "x86-interrupt" fn timer_handler(_frame: InterruptStackFrame) {
+    // XHCI HID keyboard (real hardware path)
+    if let Some(report) = hal::xhci::take_hid_report() {
+        crate::keyboard::process_hid_report(report);
+    }
+    // PS/2 poll — fallback for QEMU and any systems where USB legacy SMM is active
+    unsafe {
+        if hal::pic::inb(0x64) & 0x01 != 0 {
+            let sc = hal::pic::inb(0x60);
+            crate::keyboard::process_scancode(sc);
+        }
+    }
     hal::timer::tick();
 }
 
