@@ -151,58 +151,139 @@ pub fn scancode_to_char(scancode: u8, shift: bool, caps_lock: bool) -> Option<ch
     if b == 0 { None } else { Some(b as char) }
 }
 
-pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
-    unsafe {
-        let scancode = hal::pic::inb(0x60);
-        hal::apic::end_of_interrupt();
+/// Process a raw PS/2 scancode.  Called from the keyboard IRQ handler and
+/// from the timer-based polling fallback.
+pub fn process_scancode(scancode: u8) {
+    // 0xE0 prefix marks an extended two-byte sequence.
+    if scancode == 0xE0 {
+        EXTENDED.store(true, Ordering::Relaxed);
+        return;
+    }
 
-        // 0xE0 prefix marks an extended two-byte sequence. Bit 7 is set so it
-        // would be swallowed by the break-code filter below — handle it first.
-        if scancode == 0xE0 {
-            EXTENDED.store(true, Ordering::Relaxed);
-            return;
-        }
-
-        // Drain the extended flag before any further filtering.
-        let extended = EXTENDED.swap(false, Ordering::Relaxed);
-        if extended {
-            match scancode {
-                0x48 => { crate::shell::SHELL.lock().history_up();     }
-                0x50 => { crate::shell::SHELL.lock().history_down();   }
-                0x4B => { crate::shell::SHELL.lock().cursor_left();    }
-                0x4D => { crate::shell::SHELL.lock().cursor_right();   }
-                0x47 => { crate::shell::SHELL.lock().cursor_to_start(); }
-                0x4F => { crate::shell::SHELL.lock().cursor_to_end();  }
-                _ => {}
-            }
-            return;
-        }
-
-        // Handle modifier make/break codes before anything else.
+    let extended = EXTENDED.swap(false, Ordering::Relaxed);
+    if extended {
         match scancode {
-            0x2A | 0x36 => { MODIFIERS.lock().shift = true;  return; } // L/R shift press
-            0xAA | 0xB6 => { MODIFIERS.lock().shift = false; return; } // L/R shift release
-            0x1D        => { MODIFIERS.lock().ctrl  = true;  return; } // Ctrl press
-            0x9D        => { MODIFIERS.lock().ctrl  = false; return; } // Ctrl release
-            0x3A        => { let mut m = MODIFIERS.lock(); m.caps_lock ^= true; return; }
-            sc if sc & 0x80 != 0 => return, // all other break codes
+            0x48 => { crate::shell::SHELL.lock().history_up();      }
+            0x50 => { crate::shell::SHELL.lock().history_down();    }
+            0x4B => { crate::shell::SHELL.lock().cursor_left();     }
+            0x4D => { crate::shell::SHELL.lock().cursor_right();    }
+            0x47 => { crate::shell::SHELL.lock().cursor_to_start(); }
+            0x4F => { crate::shell::SHELL.lock().cursor_to_end();   }
+            _ => {}
+        }
+        return;
+    }
+
+    match scancode {
+        0x2A | 0x36 => { MODIFIERS.lock().shift = true;  return; }
+        0xAA | 0xB6 => { MODIFIERS.lock().shift = false; return; }
+        0x1D        => { MODIFIERS.lock().ctrl  = true;  return; }
+        0x9D        => { MODIFIERS.lock().ctrl  = false; return; }
+        0x3A        => { let mut m = MODIFIERS.lock(); m.caps_lock ^= true; return; }
+        sc if sc & 0x80 != 0 => return,
+        _ => {}
+    }
+
+    let (ch, ctrl) = {
+        let m = MODIFIERS.lock();
+        (scancode_to_char(scancode, m.shift, m.caps_lock), m.ctrl)
+    };
+
+    if let Some(ch) = ch {
+        let effective = if ctrl && ch.is_ascii_alphabetic() {
+            char::from(ch.to_ascii_lowercase() as u8 & 0x1F)
+        } else {
+            ch
+        };
+        crate::shell::SHELL.lock().push_char(effective);
+    }
+}
+
+// ── HID Boot Protocol report processing ──────────────────────────────────────
+
+// HID Usage ID → ASCII (unshifted), Returns 0 for unrecognised keys.
+fn hid_to_ascii(usage: u8, shift: bool) -> u8 {
+    match usage {
+        0x04..=0x1D => {
+            let base = b'a' + (usage - 0x04);
+            if shift { base - 32 } else { base }
+        }
+        0x1E => if shift { b'!' } else { b'1' },
+        0x1F => if shift { b'@' } else { b'2' },
+        0x20 => if shift { b'#' } else { b'3' },
+        0x21 => if shift { b'$' } else { b'4' },
+        0x22 => if shift { b'%' } else { b'5' },
+        0x23 => if shift { b'^' } else { b'6' },
+        0x24 => if shift { b'&' } else { b'7' },
+        0x25 => if shift { b'*' } else { b'8' },
+        0x26 => if shift { b'(' } else { b'9' },
+        0x27 => if shift { b')' } else { b'0' },
+        0x28 => b'\n',
+        0x2A => 0x08, // Backspace
+        0x2B => b'\t',
+        0x2C => b' ',
+        0x2D => if shift { b'_' } else { b'-' },
+        0x2E => if shift { b'+' } else { b'=' },
+        0x2F => if shift { b'{' } else { b'[' },
+        0x30 => if shift { b'}' } else { b']' },
+        0x31 => if shift { b'|' } else { b'\\' },
+        0x33 => if shift { b':' } else { b';' },
+        0x34 => if shift { b'"' } else { b'\'' },
+        0x35 => if shift { b'~' } else { b'`' },
+        0x36 => if shift { b'<' } else { b',' },
+        0x37 => if shift { b'>' } else { b'.' },
+        0x38 => if shift { b'?' } else { b'/' },
+        _ => 0,
+    }
+}
+
+static HID_PREV: Mutex<[u8; 6]> = Mutex::new([0u8; 6]);
+
+/// Process one 8-byte HID Boot Protocol keyboard report.
+/// byte 0 = modifiers, byte 1 = reserved, bytes 2-7 = keycodes (HID usage IDs).
+pub fn process_hid_report(report: [u8; 8]) {
+    let mods  = report[0];
+    let shift = mods & 0x22 != 0; // bits 1 (L-Shift) and 5 (R-Shift)
+    let ctrl  = mods & 0x11 != 0; // bits 0 (L-Ctrl)  and 4 (R-Ctrl)
+    let keys  = &report[2..8];
+
+    let mut prev = HID_PREV.lock();
+
+    for &usage in keys {
+        if usage == 0 { continue; }
+        if prev.contains(&usage) { continue; } // already held from previous report
+
+        // Navigation keys
+        match usage {
+            0x52 => { crate::shell::SHELL.lock().history_up();      continue; }
+            0x51 => { crate::shell::SHELL.lock().history_down();    continue; }
+            0x50 => { crate::shell::SHELL.lock().cursor_left();     continue; }
+            0x4F => { crate::shell::SHELL.lock().cursor_right();    continue; }
+            0x4A => { crate::shell::SHELL.lock().cursor_to_start(); continue; }
+            0x4D => { crate::shell::SHELL.lock().cursor_to_end();   continue; }
             _ => {}
         }
 
-        // Read modifier state and release the lock before touching the shell.
-        let (ch, ctrl) = {
-            let m = MODIFIERS.lock();
-            (scancode_to_char(scancode, m.shift, m.caps_lock), m.ctrl)
-        };
-
-        if let Some(ch) = ch {
+        let b = hid_to_ascii(usage, shift);
+        if b != 0 {
+            let ch = b as char;
             let effective = if ctrl && ch.is_ascii_alphabetic() {
-                // Ctrl+letter produces the ASCII control character (letter & 0x1F).
                 char::from(ch.to_ascii_lowercase() as u8 & 0x1F)
             } else {
                 ch
             };
             crate::shell::SHELL.lock().push_char(effective);
         }
+    }
+
+    // Update "previously held" state for next report
+    prev.copy_from_slice(&report[2..8]);
+}
+
+pub extern "x86-interrupt" fn keyboard_handler(_frame: InterruptStackFrame) {
+    unsafe {
+        let scancode = hal::pic::inb(0x60);
+        hal::apic::end_of_interrupt();
+        process_scancode(scancode);
     }
 }

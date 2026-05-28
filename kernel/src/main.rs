@@ -81,19 +81,34 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     let t_fb = hal::time::rdtsc();
     serial_println!("[BOOT] framebuffer_init: +{} ns", hal::time::cycles_to_ns(t_fb - t0));
 
+    println!("=== DBG BUILD ===");
+
     if !shell::print_file("/sys/welcome") {
         println!("AmaterasuOS");
     }
+    println!("[dbg] post-welcome");
 
-    unsafe { hal::pic::remap(); } // move PIC vectors to 0x20-0x2F before disabling
+    unsafe { core::arch::asm!("cli"); } // keep interrupts off until IDT is loaded
+    unsafe { hal::pic::mask_all(); }    // mask PIC via DATA ports only; avoids CMD-port SMI trap
+    unsafe { hal::ps2::init(); }        // flush stale state and re-enable keyboard port + IRQ1
+    println!("[dbg] pic ok");
     hal::apic::init(phys_offset); // mask PIC, enable LAPIC + I/O APIC, route keyboard
+    println!("[dbg] apic ok");
     let t_apic = hal::time::rdtsc();
     serial_println!("[BOOT] apic_init:        +{} ns", hal::time::cycles_to_ns(t_apic - t0));
 
     idt::init();
+    println!("[dbg] idt ok");
     unsafe { core::arch::asm!("sti"); }
+    println!("[dbg] sti ok");
+    let ps2_status = unsafe { hal::pic::inb(0x64) };
+    let ps2_data   = unsafe { hal::pic::inb(0x60) };
+    println!("[dbg] ps2: status(0x64)={:#04x} data(0x60)={:#04x}", ps2_status, ps2_data);
 
     hal::timer::init(); // calibrate LAPIC timer and start 1 ms periodic IRQ
+    println!("[dbg] timer ok");
+    hal::xhci::init(phys_offset); // USB HID boot keyboard (Z390 / no PS/2 legacy SMM)
+    println!("[dbg] xhci ok");
     let t_done = hal::time::rdtsc();
     serial_println!("[BOOT] kernel_ready:     +{} ns (total)", hal::time::cycles_to_ns(t_done - t0));
 

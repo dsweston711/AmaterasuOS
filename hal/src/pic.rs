@@ -36,13 +36,44 @@ pub unsafe fn inb(port: u16) -> u8 {
     val
 }
 
+pub unsafe fn outl(port: u16, val: u32) {
+    core::arch::asm!(
+        "out dx, eax",
+        in("dx") port, in("eax") val,
+        options(nomem, nostack, preserves_flags)
+    );
+}
+
+pub unsafe fn inl(port: u16) -> u32 {
+    let val: u32;
+    core::arch::asm!(
+        "in eax, dx",
+        out("eax") val, in("dx") port,
+        options(nomem, nostack, preserves_flags)
+    );
+    val
+}
+
 // A short I/O delay by writing to an unused port; gives the PIC time to settle.
 pub unsafe fn io_wait() {
     outb(0x80, 0x00);
 }
 
+/// Mask every IRQ line on both PICs without touching the CMD ports.
+/// Safe to call before the IDT is loaded; only writes to DATA ports (0x21/0xA1).
+/// Use this instead of remap() on UEFI systems where CMD port writes may be
+/// trapped by firmware SMM handlers and cause a hang.
+pub unsafe fn mask_all() {
+    outb(PIC1_DATA, 0xFF);
+    io_wait();
+    outb(PIC2_DATA, 0xFF);
+    io_wait();
+}
+
 /// Remap both PICs so IRQ0-7 -> 0x20-0x27 and IRQ8-15 -> 0x28-0x2F,
 /// moving them out of the range reserved for CPU exceptions (0x00-0x1F).
+/// NOTE: On some UEFI systems (e.g. Z390), writing ICW1_INIT to CMD ports
+/// (0x20/0xA0) triggers an SMI trap and hangs. Prefer mask_all() + cli.
 pub unsafe fn remap() {
     // Save existing masks
     let mask1 = inb(PIC1_DATA);

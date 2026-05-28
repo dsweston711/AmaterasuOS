@@ -54,8 +54,8 @@ pub fn init(phys_off: usize) {
 
     unsafe {
         // ── 1. Fully mask the 8259 PIC ───────────────────────────────────
-        // pic::remap() has already moved PIC vectors to 0x20-0x2F so any
-        // remaining spurious PIC interrupts won't hit CPU exception vectors.
+        // pic::mask_all() + cli has already suppressed PIC IRQs; this is a
+        // belt-and-suspenders re-mask before LAPIC takes over.
         crate::pic::outb(0x21, 0xFF); // mask all PIC1 lines
         crate::pic::outb(0xA1, 0xFF); // mask all PIC2 lines
 
@@ -69,24 +69,44 @@ pub fn init(phys_off: usize) {
         lapic_write(LAPIC_SVR, SVR_ENABLE | SVR_SPURIOUS);
         lapic_write(LAPIC_TPR, 0); // accept all interrupt classes
 
-        crate::serial_println!(
-            "[APIC] LAPIC id={} enabled at virt {:#010x}",
-            lapic_id, lapic_virt
-        );
+        crate::serial_println!("[APIC] LAPIC id={} enabled at virt {:#010x}", lapic_id, lapic_virt);
+        crate::println!(    "[APIC] LAPIC id={}", lapic_id);
 
         // ── 4. Program I/O APIC redirection for keyboard (IRQ 1) ────────
-        // Global System Interrupt = IRQ1 (PCI/ISA) - gsi_base gives the
-        // index into this I/O APIC's redirection table.
-        let kbd_gsi   = 1u32; // keyboard is always ISA IRQ 1
-        let entry_idx = kbd_gsi - info.ioapic_gsi_base;
+        // Check MADT for an Interrupt Source Override on ISA IRQ 1.
+        // If present, use the remapped GSI and the specified polarity/trigger.
+        // If absent, fall back to ISA defaults: GSI 1, active-high, edge.
+        let (kbd_gsi, active_low, level_triggered) = match info.overrides[1] {
+            Some(ov) => {
+                let pol  = if ov.active_low      { "active-low" } else { "active-high" };
+                let trig = if ov.level_triggered { "level" }      else { "edge" };
+                crate::serial_println!("[APIC] kbd override: GSI {} pol={} trig={}", ov.gsi, pol, trig);
+                crate::println!(    "[APIC] kbd override: GSI {} pol={} trig={}", ov.gsi, pol, trig);
+                (ov.gsi, ov.active_low, ov.level_triggered)
+            }
+            None => {
+                crate::serial_println!("[APIC] kbd: no override, ISA defaults (GSI 1, edge, active-high)");
+                crate::println!(    "[APIC] kbd: no override, ISA defaults (GSI 1, edge, active-high)");
+                (1u32, false, false)
+            }
+        };
+
+        // Build redirection entry low-dword:
+        //   bits  7:0  = vector (0x21)
+        //   bit  13    = polarity (0=active-high, 1=active-low)
+        //   bit  15    = trigger  (0=edge, 1=level)
+        //   bit  16    = mask     (0=unmasked)
+        let mut lo: u32 = 0x21;
+        if active_low      { lo |= 1 << 13; }
+        if level_triggered { lo |= 1 << 15; }
+
+        let entry_idx   = kbd_gsi - info.ioapic_gsi_base;
         let ioredtbl_lo = 0x10u8 + (2 * entry_idx) as u8;
         let ioredtbl_hi = ioredtbl_lo + 1;
 
-        // Low dword: vector=0x21, fixed delivery, physical dest, active-high,
-        //            edge-triggered, not masked.
-        ioapic_write(ioapic_virt, ioredtbl_lo, 0x00000021);
-        // High dword: bits 31:24 = destination LAPIC ID (BSP = 0).
+        // Write hi before lo so the entry is never briefly live with wrong flags.
         ioapic_write(ioapic_virt, ioredtbl_hi, (lapic_id as u32) << 24);
+        ioapic_write(ioapic_virt, ioredtbl_lo, lo);
 
         crate::serial_println!(
             "[APIC] I/O APIC virt {:#010x}: IRQ1 → vec 0x21 → LAPIC {}",

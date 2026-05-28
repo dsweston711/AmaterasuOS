@@ -1,10 +1,19 @@
 use core::ptr;
 use spin::Once;
 
+#[derive(Clone, Copy, Debug)]
+pub struct IrqOverride {
+    pub isa_irq:         u8,
+    pub gsi:             u32,
+    pub active_low:      bool,
+    pub level_triggered: bool,
+}
+
 pub struct ApicInfo {
-    pub lapic_addr:     u64,
-    pub ioapic_addr:    u64,
+    pub lapic_addr:      u64,
+    pub ioapic_addr:     u64,
     pub ioapic_gsi_base: u32,
+    pub overrides:       [Option<IrqOverride>; 16],
 }
 
 static APIC_INFO: Once<ApicInfo> = Once::new();
@@ -136,20 +145,50 @@ unsafe fn parse(rsdp_phys: u64, phys_off: usize) -> Option<ApicInfo> {
 
     let mut ioapic_addr:     Option<u64> = None;
     let mut ioapic_gsi_base: u32         = 0;
+    let mut overrides = [None::<IrqOverride>; 16];
 
     while ic + 2 <= madt_end {
         let entry_type = *(ic as *const u8);
         let entry_len  = *((ic + 1) as *const u8) as usize;
         if entry_len < 2 { break; }
 
-        if entry_type == 1 && ioapic_addr.is_none() {
-            // Type 1: I/O APIC
-            // Layout: type(1), len(1), ioapic_id(1), reserved(1), addr(4), gsi_base(4)
-            let addr = ptr::read_unaligned((ic + 4) as *const u32) as u64;
-            let gsi  = ptr::read_unaligned((ic + 8) as *const u32);
-            crate::serial_println!("[ACPI] I/O APIC phys {:#010x}, GSI base {}", addr, gsi);
-            ioapic_addr     = Some(addr);
-            ioapic_gsi_base = gsi;
+        match entry_type {
+            1 if entry_len >= 12 && ioapic_addr.is_none() => {
+                // Type 1: I/O APIC
+                // Layout: type(1), len(1), ioapic_id(1), reserved(1), addr(4), gsi_base(4)
+                let addr = ptr::read_unaligned((ic + 4) as *const u32) as u64;
+                let gsi  = ptr::read_unaligned((ic + 8) as *const u32);
+                crate::serial_println!("[ACPI] I/O APIC phys {:#010x}, GSI base {}", addr, gsi);
+                ioapic_addr     = Some(addr);
+                ioapic_gsi_base = gsi;
+            }
+            2 if entry_len >= 10 => {
+                // Type 2: Interrupt Source Override
+                // Layout: type(1), len(1), bus(1), source(1), gsi(4), flags(2)
+                let bus    = *((ic + 2) as *const u8);
+                let source = *((ic + 3) as *const u8);
+                let gsi    = ptr::read_unaligned((ic + 4) as *const u32);
+                let flags  = ptr::read_unaligned((ic + 8) as *const u16);
+
+                if bus == 0 && (source as usize) < 16 {
+                    let polarity = flags & 0b0011;
+                    let trigger  = (flags >> 2) & 0b0011;
+                    let active_low      = polarity == 0b11;
+                    let level_triggered = trigger  == 0b11;
+
+                    overrides[source as usize] = Some(IrqOverride {
+                        isa_irq: source, gsi, active_low, level_triggered,
+                    });
+
+                    crate::serial_println!(
+                        "[ACPI] IRQ override: ISA {} -> GSI {} pol={} trig={}",
+                        source, gsi,
+                        if active_low { "active-low" } else { "active-high" },
+                        if level_triggered { "level" } else { "edge" }
+                    );
+                }
+            }
+            _ => {}
         }
 
         ic += entry_len;
@@ -161,5 +200,5 @@ unsafe fn parse(rsdp_phys: u64, phys_off: usize) -> Option<ApicInfo> {
         lapic_addr, ioapic_addr, ioapic_gsi_base
     );
 
-    Some(ApicInfo { lapic_addr, ioapic_addr, ioapic_gsi_base })
+    Some(ApicInfo { lapic_addr, ioapic_addr, ioapic_gsi_base, overrides })
 }
