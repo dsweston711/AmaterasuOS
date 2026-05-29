@@ -32,7 +32,7 @@ const OP_CONFIG:  usize = 0x38;
 const OP_PORTSC_BASE: usize = 0x400;
 
 // ── Runtime interrupter 0 offsets (from rt_base + 0x20) ─────────────────────
-const _IR_IMAN:  usize = 0x00;
+const IR_IMAN:   usize = 0x00;
 const _IR_IMOD:  usize = 0x04;
 const IR_ERSTSZ: usize = 0x08;
 // offset 0x0C reserved
@@ -129,11 +129,7 @@ static KBD_BUF_PHYS:  AtomicUsize = AtomicUsize::new(0);
     ((base + off    ) as *mut u32).write_volatile(v as u32);
     ((base + off + 4) as *mut u32).write_volatile((v >> 32) as u32);
 }
-// hi dword first (required for CRCR — lo write activates the ring)
-#[inline] unsafe fn wr64_hi(base: usize, off: usize, v: u64) {
-    ((base + off + 4) as *mut u32).write_volatile((v >> 32) as u32);
-    ((base + off    ) as *mut u32).write_volatile(v as u32);
-}
+
 #[inline] fn phys(virt: usize, po: usize) -> usize { virt - po }
 #[inline] unsafe fn rd8(base: usize, off: usize) -> u8 {
     ((base + off) as *const u8).read_volatile()
@@ -578,7 +574,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     // ── Controller configuration ──────────────────────────────────────────────
     wr32(op, OP_CONFIG,  2_u32.min(max_slots as u32)); // max 2 device slots
     wr64_lo(op, OP_DCBAAP, dcbaa_phys as u64);
-    wr64_hi(op, OP_CRCR, cmd_ring_phys as u64 | 1); // RCS=1
+    wr64_lo(op, OP_CRCR, cmd_ring_phys as u64 | 1); // RCS=1; lo written first so HI write commits
 
     // ── Event ring (interrupter 0) ────────────────────────────────────────────
     (*erst).e[0].addr = evt_ring_phys as u64;
@@ -588,6 +584,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     wr32(ir0, IR_ERSTSZ, 1);
     wr64_lo(ir0, IR_ERDP, evt_ring_phys as u64);
     wr64_lo(ir0, IR_ERSTBA, erst_phys as u64);
+    wr32(ir0, IR_IMAN, 1 << 1); // IMAN.IE=1: enable interrupter so the xHC posts events
 
     // ── Start the controller ──────────────────────────────────────────────────
     wr32(op, OP_USBCMD, (1 << 2) | 1); // INTE=1 (for IMAN), RUN=1
