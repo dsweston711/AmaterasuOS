@@ -33,13 +33,14 @@ run-uefi: image
 		exit 1; \
 	fi; \
 	if [ -f "$(OVMF_CODE)" ] && [ -f "$(OVMF_VARS)" ]; then \
-		cp -n $(OVMF_VARS) target/OVMF_VARS.fd 2>/dev/null; true; \
+		cp $(OVMF_VARS) target/OVMF_VARS.fd; \
 		PFLASH="-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) -drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
 	else \
-		cp -n $(OVMF) target/OVMF_VARS.fd 2>/dev/null; true; \
+		cp $(OVMF) target/OVMF_VARS.fd; \
 		PFLASH="-drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
 	fi; \
 	qemu-system-x86_64 \
+		-machine q35 \
 		$$PFLASH \
 		-drive format=raw,file=$(UEFI_IMG) \
 		-serial stdio \
@@ -84,15 +85,16 @@ test-integration: image
 		exit 1; \
 	fi; \
 	if [ -f "$(OVMF_CODE)" ] && [ -f "$(OVMF_VARS)" ]; then \
-		cp -n $(OVMF_VARS) target/OVMF_VARS.fd 2>/dev/null; true; \
+		cp $(OVMF_VARS) target/OVMF_VARS.fd; \
 		PFLASH="-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) -drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
 	else \
-		cp -n $(OVMF) target/OVMF_VARS.fd 2>/dev/null; true; \
+		cp $(OVMF) target/OVMF_VARS.fd; \
 		PFLASH="-drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
 	fi; \
 	echo "=== Integration: boot test (UEFI/OVMF) ==="; \
 	rm -f /tmp/amaterasu-boot.log; \
 	timeout 60 qemu-system-x86_64 \
+		-machine q35 \
 		$$PFLASH \
 		-drive format=raw,file=$(UEFI_IMG) \
 		-display none -serial stdio -no-reboot -m 128M \
