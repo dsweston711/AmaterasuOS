@@ -609,6 +609,20 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     let mut cs = CmdState { enq: 0, cycle: 1 };
     let mut es = EvtState { deq: 0, cycle: 1 };
 
+    // Power on every port before checking connect status. On controllers with
+    // HCCPARAMS1.PPC=1 (software port power control — the common case on real
+    // silicon), ports come out of HCRST unpowered and PORTSC.CCS reads 0 until
+    // PP is set; port_reset() used to be the only place that set PP, but it
+    // was only reached *after* a CCS check that could never pass. QEMU's xHC
+    // model doesn't gate CCS on PP, so this was invisible until tested on
+    // real hardware. Settle time is USB2.0 §7.1.7.3's power-on-to-power-good.
+    for port1 in 1..=max_ports {
+        let base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
+        if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
+    }
+    let dl = deadline_cycles(20_000);
+    while !past(dl) { core::hint::spin_loop(); }
+
     // ── Port enumeration ──────────────────────────────────────────────────────
     for port1 in 1..=max_ports {
         let portsc_base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
