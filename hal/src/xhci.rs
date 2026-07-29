@@ -454,15 +454,10 @@ unsafe fn setup_addr_input_ctx(ictx: *mut InCtx, ep0_ring_phys: usize, port_spee
     let mps: u32 = match port_speed {
         4 | 5 => 512, // SuperSpeed / SuperSpeedPlus — spec-fixed, no guessing needed
         3     => 64,  // High Speed — spec-fixed
-        1     => 64,  // DIAGNOSTIC: Full Speed's real bMaxPacketSize0 is unknown until the
-                       // device descriptor is read (legitimately 8/16/32/64) — we've been
-                       // guessing 8 for every non-HS/SS device. Real hardware is failing
-                       // Address Device (cc=4) on every Full Speed port while the one
-                       // fixed-MPS (SuperSpeed) device succeeds; testing whether 64 — common
-                       // for many real keyboards — is the actual value this device expects.
-                       // Not a permanent fix: a genuine 8-byte device would need the proper
-                       // BSR=1 → read descriptor → Evaluate Context → BSR=0 sequence instead.
-        _     => 8,   // Low Speed (2) — spec-fixed, always 8
+        _     => 8,   // Full/Low Speed — safe default guess; see ADR/issue #155 notes:
+                       // trying 64 for Full Speed did not fix real-hardware Address Device
+                       // cc=4 failures, so reverted. Real fix is likely the BSR=1 → read
+                       // descriptor → Evaluate Context → BSR=0 sequence, not a hardcoded guess.
     };
     c[2][1] = (3 << 1) | (4 << 3) | (mps << 16);
     // DW2-3: TR Dequeue Pointer
