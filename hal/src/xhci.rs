@@ -391,6 +391,14 @@ fn find_hid_kbd_ep(cfg: &[u8]) -> Option<(u8, u8, u8, u16, u8)> {
 
         if btype == 0x04 && blen >= 9 {
             // Interface descriptor
+            crate::serial_println!(
+                "[XHCI] iface {}: class={:#04x} subclass={:#04x} proto={:#04x}",
+                cfg[off+2], cfg[off+5], cfg[off+6], cfg[off+7]
+            );
+            crate::println!(
+                "[XHCI] iface {}: class={:#04x} subclass={:#04x} proto={:#04x}",
+                cfg[off+2], cfg[off+5], cfg[off+6], cfg[off+7]
+            );
             in_hid_kbd = cfg[off+5] == 0x03 && cfg[off+6] == 0x01 && cfg[off+7] == 0x01;
             if in_hid_kbd { iface = cfg[off+2]; }
         } else if btype == 0x05 && blen >= 7 && in_hid_kbd {
