@@ -660,6 +660,15 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
             // Some ports still work without PED after reset (USB 3.0); try anyway.
         }
 
+        // USB 2.0 §9.2.6.2 Reset Recovery Time (TRSTRCY): the host must wait
+        // at least 10ms after reset signaling ends before the first control
+        // transfer to the device. QEMU's emulated devices don't enforce this
+        // and respond immediately; real devices can fail the very next
+        // command (observed: Address Device cc=4 USB Transaction Error) on
+        // every Full/Low/High-Speed port without it.
+        let dl = deadline_cycles(10_000);
+        while !past(dl) { core::hint::spin_loop(); }
+
         // Enable Slot command
         cmd_push(cmd_ring, &mut cs, [0, 0, 0, TRB_ENABLE_SLOT << 10]);
         let (cc, slot) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 1_000_000);
