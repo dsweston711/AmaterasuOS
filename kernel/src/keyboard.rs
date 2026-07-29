@@ -1,4 +1,5 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use spin::Mutex;
 use x86_64::structures::idt::InterruptStackFrame;
 
@@ -151,7 +152,51 @@ pub fn scancode_to_char(scancode: u8, shift: bool, caps_lock: bool) -> Option<ch
     if b == 0 { None } else { Some(b as char) }
 }
 
-/// Process a raw PS/2 scancode.  Called from the keyboard IRQ handler and
+// ── Input ring buffer ─────────────────────────────────────────────────────────
+//
+// SPSC: ISR pushes to head, main-loop drain() pulls from tail.
+// Navigation keys are encoded as private control bytes so everything goes
+// through one path and the ISR never touches the shell or framebuffer.
+//
+//   0x02 = cursor_left   (ctrl-B)
+//   0x06 = cursor_right  (ctrl-F)
+//   0x0E = history_down  (ctrl-N)
+//   0x10 = history_up    (ctrl-P)
+//   0x01/0x05 = Home/End already handled by push_char as ctrl-A/ctrl-E
+
+const RB_CAP:  usize = 64;
+const RB_MASK: usize = RB_CAP - 1;
+
+struct RingBuf { buf: UnsafeCell<[u8; RB_CAP]> }
+unsafe impl Sync for RingBuf {}
+
+static RB:      RingBuf    = RingBuf { buf: UnsafeCell::new([0u8; RB_CAP]) };
+static RB_HEAD: AtomicUsize = AtomicUsize::new(0); // producer index (ISR)
+static RB_TAIL: AtomicUsize = AtomicUsize::new(0); // consumer index (main loop)
+
+fn rb_push(b: u8) {
+    let head = RB_HEAD.load(Ordering::Relaxed);
+    let next = (head + 1) & RB_MASK;
+    if next == RB_TAIL.load(Ordering::Acquire) { return; } // full — drop
+    unsafe { (*RB.buf.get())[head] = b; }
+    RB_HEAD.store(next, Ordering::Release);
+}
+
+/// Drain all buffered bytes into the shell. Call from the main `hlt` loop after
+/// every interrupt wakeup — never from interrupt context.
+pub fn drain() {
+    loop {
+        let tail = RB_TAIL.load(Ordering::Relaxed);
+        if tail == RB_HEAD.load(Ordering::Acquire) { break; }
+        let b = unsafe { (*RB.buf.get())[tail] };
+        RB_TAIL.store((tail + 1) & RB_MASK, Ordering::Release);
+        crate::shell::SHELL.lock().push_char(b as char);
+    }
+}
+
+// ── PS/2 scancode processing ──────────────────────────────────────────────────
+
+/// Process a raw PS/2 scancode. Called from the keyboard IRQ handler and
 /// from the timer-based polling fallback.
 pub fn process_scancode(scancode: u8) {
     // 0xE0 prefix marks an extended two-byte sequence.
@@ -163,12 +208,12 @@ pub fn process_scancode(scancode: u8) {
     let extended = EXTENDED.swap(false, Ordering::Relaxed);
     if extended {
         match scancode {
-            0x48 => { crate::shell::SHELL.lock().history_up();      }
-            0x50 => { crate::shell::SHELL.lock().history_down();    }
-            0x4B => { crate::shell::SHELL.lock().cursor_left();     }
-            0x4D => { crate::shell::SHELL.lock().cursor_right();    }
-            0x47 => { crate::shell::SHELL.lock().cursor_to_start(); }
-            0x4F => { crate::shell::SHELL.lock().cursor_to_end();   }
+            0x48 => rb_push(0x10), // up    → history_up
+            0x50 => rb_push(0x0E), // down  → history_down
+            0x4B => rb_push(0x02), // left  → cursor_left
+            0x4D => rb_push(0x06), // right → cursor_right
+            0x47 => rb_push(0x01), // home  → cursor_to_start
+            0x4F => rb_push(0x05), // end   → cursor_to_end
             _ => {}
         }
         return;
@@ -195,18 +240,19 @@ pub fn process_scancode(scancode: u8) {
         } else {
             ch
         };
-        crate::shell::SHELL.lock().push_char(effective);
+        rb_push(effective as u8);
     }
 }
 
 // ── HID Boot Protocol report processing ──────────────────────────────────────
 
-// HID Usage ID → ASCII (unshifted), Returns 0 for unrecognised keys.
-fn hid_to_ascii(usage: u8, shift: bool) -> u8 {
+// HID Usage ID → ASCII. Returns 0 for unrecognised keys.
+// caps_lock inverts shift for letters (0x04–0x1D) only; symbols follow shift.
+fn hid_to_ascii(usage: u8, shift: bool, caps_lock: bool) -> u8 {
     match usage {
         0x04..=0x1D => {
             let base = b'a' + (usage - 0x04);
-            if shift { base - 32 } else { base }
+            if shift ^ caps_lock { base - 32 } else { base }
         }
         0x1E => if shift { b'!' } else { b'1' },
         0x1F => if shift { b'@' } else { b'2' },
@@ -237,7 +283,8 @@ fn hid_to_ascii(usage: u8, shift: bool) -> u8 {
     }
 }
 
-static HID_PREV: Mutex<[u8; 6]> = Mutex::new([0u8; 6]);
+static HID_CAPS_LOCK: AtomicBool  = AtomicBool::new(false);
+static HID_PREV:      Mutex<[u8; 6]> = Mutex::new([0u8; 6]);
 
 /// Process one 8-byte HID Boot Protocol keyboard report.
 /// byte 0 = modifiers, byte 1 = reserved, bytes 2-7 = keycodes (HID usage IDs).
@@ -245,26 +292,26 @@ pub fn process_hid_report(report: [u8; 8]) {
     let mods  = report[0];
     let shift = mods & 0x22 != 0; // bits 1 (L-Shift) and 5 (R-Shift)
     let ctrl  = mods & 0x11 != 0; // bits 0 (L-Ctrl)  and 4 (R-Ctrl)
-    let keys  = &report[2..8];
+    let caps  = HID_CAPS_LOCK.load(Ordering::Relaxed);
 
     let mut prev = HID_PREV.lock();
 
-    for &usage in keys {
-        if usage == 0 { continue; }
-        if prev.contains(&usage) { continue; } // already held from previous report
+    for &usage in &report[2..8] {
+        if usage == 0 || usage == 0x01 { continue; } // 0x00 = none, 0x01 = rollover
+        if prev.contains(&usage) { continue; }        // still held from previous report
 
-        // Navigation keys
         match usage {
-            0x52 => { crate::shell::SHELL.lock().history_up();      continue; }
-            0x51 => { crate::shell::SHELL.lock().history_down();    continue; }
-            0x50 => { crate::shell::SHELL.lock().cursor_left();     continue; }
-            0x4F => { crate::shell::SHELL.lock().cursor_right();    continue; }
-            0x4A => { crate::shell::SHELL.lock().cursor_to_start(); continue; }
-            0x4D => { crate::shell::SHELL.lock().cursor_to_end();   continue; }
+            0x39 => { HID_CAPS_LOCK.store(!caps, Ordering::Relaxed); continue; }
+            0x52 => { rb_push(0x10); continue; } // up    → history_up
+            0x51 => { rb_push(0x0E); continue; } // down  → history_down
+            0x50 => { rb_push(0x02); continue; } // left  → cursor_left
+            0x4F => { rb_push(0x06); continue; } // right → cursor_right
+            0x4A => { rb_push(0x01); continue; } // home  → cursor_to_start
+            0x4D => { rb_push(0x05); continue; } // end   → cursor_to_end
             _ => {}
         }
 
-        let b = hid_to_ascii(usage, shift);
+        let b = hid_to_ascii(usage, shift, caps);
         if b != 0 {
             let ch = b as char;
             let effective = if ctrl && ch.is_ascii_alphabetic() {
@@ -272,11 +319,10 @@ pub fn process_hid_report(report: [u8; 8]) {
             } else {
                 ch
             };
-            crate::shell::SHELL.lock().push_char(effective);
+            rb_push(effective as u8);
         }
     }
 
-    // Update "previously held" state for next report
     prev.copy_from_slice(&report[2..8]);
 }
 

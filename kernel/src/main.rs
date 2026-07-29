@@ -115,6 +115,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     shell::prompt();
 
     loop {
+        keyboard::drain();
         unsafe { core::arch::asm!("hlt"); }
     }
 }
