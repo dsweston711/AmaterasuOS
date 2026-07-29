@@ -655,9 +655,15 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         crate::serial_println!("[XHCI] port {} connected, speed={}", port1, speed);
         crate::println!(       "[XHCI] port {} connected, speed={}", port1, speed);
 
-        if !port_reset(op, port1) {
-            crate::serial_println!("[XHCI] port {} reset failed or not enabled", port1);
+        let reset_ok  = port_reset(op, port1);
+        let sc_after  = rd32(op + OP_PORTSC_BASE + 0x10 * (port1 - 1), 0);
+        if !reset_ok {
+            crate::serial_println!("[XHCI] port {} reset failed or not enabled, portsc={:#010x}", port1, sc_after);
+            crate::println!(       "[XHCI] port {} reset failed or not enabled, portsc={:#010x}", port1, sc_after);
             // Some ports still work without PED after reset (USB 3.0); try anyway.
+        } else {
+            crate::serial_println!("[XHCI] port {} reset ok, portsc={:#010x}", port1, sc_after);
+            crate::println!(       "[XHCI] port {} reset ok, portsc={:#010x}", port1, sc_after);
         }
 
         // USB 2.0 §9.2.6.2 Reset Recovery Time (TRSTRCY): the host must wait
