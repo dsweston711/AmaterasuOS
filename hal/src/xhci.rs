@@ -101,6 +101,7 @@ unsafe fn alloc_zeroed<T>() -> *mut T {
 // ── Global state for keyboard polling ────────────────────────────────────────
 
 static KBD_READY:     AtomicBool  = AtomicBool::new(false);
+static KBD_DBG_COUNT: AtomicUsize = AtomicUsize::new(0); // reports logged (capped at 16)
 static KBD_SLOT:      AtomicUsize = AtomicUsize::new(0);
 static KBD_EP_DB:     AtomicU32   = AtomicU32::new(0);   // doorbell target (ep context index)
 static KBD_DB_BASE:   AtomicUsize = AtomicUsize::new(0);
@@ -478,6 +479,7 @@ unsafe fn arm_kbd_ep_raw(
         8,
         (TRB_NORMAL << 10) | (1 << 5) | cycle,
     ];
+
     // Update Link TRB cycle to match so consumer can wrap correctly
     r.t[link_idx].dw[3] = (r.t[link_idx].dw[3] & !1) | cycle;
 
@@ -733,6 +735,15 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         );
         if !ok { crate::serial_println!("[XHCI] SET_PROTOCOL failed (may be ok)"); }
 
+        // SET_IDLE(0, 0) — stop repeat reports when no key state changes (HID 1.11 §7.2.4)
+        // bmRequestType=0x21, bRequest=0x0A, wValue=0x0000, wIndex=iface, wLength=0
+        let ok = ctrl_out(
+            ep0_ring, &mut ep0s, evt_ring, &mut es,
+            rt, evt_ring_phys, db, slot as usize,
+            [0x21, 0x0A, 0x00, 0x00, iface, 0, 0, 0],
+        );
+        if !ok { crate::serial_println!("[XHCI] SET_IDLE failed (may be ok)"); }
+
         // Allocate interrupt endpoint ring and HID report buffer
         let int_ring: *mut IntRing = alloc_zeroed::<IntRing>();
         let hid_buf:  *mut HidBuf  = alloc_zeroed::<HidBuf>();
@@ -792,6 +803,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
 
 // ── Polling (called from timer interrupt handler every 1 ms) ─────────────────
 
+pub fn kbd_ready() -> bool {
+    KBD_READY.load(Ordering::Acquire)
+}
+
 pub fn take_hid_report() -> Option<[u8; 8]> {
     if !KBD_READY.load(Ordering::Acquire) { return None; }
 
@@ -829,6 +844,16 @@ pub fn take_hid_report() -> Option<[u8; 8]> {
     let buf = KBD_BUF_VIRT.load(Ordering::Relaxed) as *const u8;
     let mut report = [0u8; 8];
     for i in 0..8 { report[i] = unsafe { buf.add(i).read_volatile() }; }
+
+    // Log first 16 reports to serial for driver debugging; remove once stable.
+    let n = KBD_DBG_COUNT.fetch_add(1, Ordering::Relaxed);
+    if n < 16 {
+        crate::serial_println!(
+            "[XHCI] report #{}: mod={:02x} res={:02x} keys={:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+            n, report[0], report[1],
+            report[2], report[3], report[4], report[5], report[6], report[7]
+        );
+    }
 
     // Re-arm the interrupt endpoint
     unsafe {
