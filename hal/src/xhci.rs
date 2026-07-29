@@ -505,7 +505,11 @@ pub fn init(phys_off: usize) {
 
     let cap = match crate::pci::find_xhci_bar0(phys_off) {
         Some(v) => v,
-        None    => { crate::serial_println!("[XHCI] no controller — keyboard disabled"); return; }
+        None    => {
+            crate::serial_println!("[XHCI] no controller — keyboard disabled");
+            crate::println!(       "[XHCI] no controller — keyboard disabled");
+            return;
+        }
     };
 
     unsafe { init_unsafe(cap, phys_off) };
@@ -599,6 +603,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         core::hint::spin_loop();
     }
     crate::serial_println!("[XHCI] controller running");
+    crate::println!(       "[XHCI] controller running");
 
     // ── State for command + event ring operations ─────────────────────────────
     let mut cs = CmdState { enq: 0, cycle: 1 };
@@ -612,6 +617,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
 
         let speed = ((sc >> 10) & 0xF) as u8; // 1=FS,2=LS,3=HS,4=SS,5=SSP
         crate::serial_println!("[XHCI] port {} connected, speed={}", port1, speed);
+        crate::println!(       "[XHCI] port {} connected, speed={}", port1, speed);
 
         if !port_reset(op, port1) {
             crate::serial_println!("[XHCI] port {} reset failed or not enabled", port1);
@@ -623,9 +629,11 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         let (cc, slot) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 1_000_000);
         if cc != CC_SUCCESS || slot == 0 {
             crate::serial_println!("[XHCI] port {} Enable Slot failed cc={}", port1, cc);
+            crate::println!(       "[XHCI] port {} Enable Slot failed cc={}", port1, cc);
             continue;
         }
         crate::serial_println!("[XHCI] port {} slot={}", port1, slot);
+        crate::println!(       "[XHCI] port {} slot={}", port1, slot);
 
         // Allocate device contexts
         let out_ctx: *mut OutCtx = alloc_zeroed::<OutCtx>();
@@ -662,9 +670,11 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
         if cc != CC_SUCCESS {
             crate::serial_println!("[XHCI] slot {} Address Device failed cc={}", slot, cc);
+            crate::println!(       "[XHCI] slot {} Address Device failed cc={}", slot, cc);
             continue;
         }
         crate::serial_println!("[XHCI] slot {} addressed", slot);
+        crate::println!(       "[XHCI] slot {} addressed", slot);
 
         let mut ep0s = Ep0State { enq: 0, cycle: 1 };
 
@@ -711,6 +721,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         let ep_info = find_hid_kbd_ep(cfg_slice);
         if ep_info.is_none() {
             crate::serial_println!("[XHCI] slot {} not a HID boot keyboard", slot);
+            crate::println!(       "[XHCI] slot {} not a HID boot keyboard", slot);
             continue;
         }
         let (cfg_val, iface, ep_addr, max_pkt, ival) = ep_info.unwrap();
@@ -718,6 +729,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         let ep_in  = (ep_addr >> 7) & 1;
         let ep_ctx_idx = (ep_num * 2 + ep_in) as usize; // XHCI context index
         crate::serial_println!(
+            "[XHCI] HID kbd: cfg={} iface={} ep={:#04x} mps={} ival={} ctx_idx={}",
+            cfg_val, iface, ep_addr, max_pkt, ival, ep_ctx_idx
+        );
+        crate::println!(
             "[XHCI] HID kbd: cfg={} iface={} ep={:#04x} mps={} ival={} ctx_idx={}",
             cfg_val, iface, ep_addr, max_pkt, ival, ep_ctx_idx
         );
@@ -771,8 +786,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         ]);
         let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
         crate::serial_println!("[XHCI] Configure Endpoint cc={}", cc);
+        crate::println!(       "[XHCI] Configure Endpoint cc={}", cc);
         if cc != CC_SUCCESS {
             crate::serial_println!("[XHCI] Configure Endpoint failed");
+            crate::println!(       "[XHCI] Configure Endpoint failed");
             continue;
         }
 
@@ -799,15 +816,24 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
 
         KBD_READY.store(true, Ordering::Release);
         crate::serial_println!("[XHCI] keyboard ready on slot {}", slot);
+        crate::println!(       "[XHCI] keyboard ready on slot {}", slot);
         return; // found our keyboard
     }
     crate::serial_println!("[XHCI] no HID boot keyboard found");
+    crate::println!(       "[XHCI] no HID boot keyboard found");
 }
 
 // ── Polling (called from timer interrupt handler every 1 ms) ─────────────────
 
 pub fn kbd_ready() -> bool {
     KBD_READY.load(Ordering::Acquire)
+}
+
+/// Total HID reports successfully taken so far. Diagnostic only — lets a
+/// PASSIVE_LEVEL caller (e.g. the main hlt loop) detect "first report
+/// arrived" without printing from interrupt context itself (ADR-013).
+pub fn reports_received() -> usize {
+    KBD_DBG_COUNT.load(Ordering::Relaxed)
 }
 
 pub fn take_hid_report() -> Option<[u8; 8]> {

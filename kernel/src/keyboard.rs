@@ -182,9 +182,21 @@ fn rb_push(b: u8) {
     RB_HEAD.store(next, Ordering::Release);
 }
 
+// Announces the first XHCI HID report on the framebuffer, once. Diagnostic
+// only — lets real-hardware testing without a serial adapter confirm the
+// interrupt endpoint is actually delivering reports, not just that init()
+// completed. Safe to check here: drain() runs at PASSIVE_LEVEL, never from
+// interrupt context (ADR-013).
+static XHCI_REPORT_ANNOUNCED: AtomicBool = AtomicBool::new(false);
+
 /// Drain all buffered bytes into the shell. Call from the main `hlt` loop after
 /// every interrupt wakeup — never from interrupt context.
 pub fn drain() {
+    if hal::xhci::reports_received() > 0
+        && !XHCI_REPORT_ANNOUNCED.swap(true, Ordering::Relaxed)
+    {
+        println!("[dbg] first XHCI HID report received");
+    }
     loop {
         let tail = RB_TAIL.load(Ordering::Relaxed);
         if tail == RB_HEAD.load(Ordering::Acquire) { break; }
