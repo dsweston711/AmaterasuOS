@@ -58,6 +58,7 @@ const TRB_DATA:      u32 = 3;
 const TRB_STATUS:    u32 = 4;
 const TRB_LINK:      u32 = 6;
 const TRB_ENABLE_SLOT:  u32 = 9;
+const TRB_DISABLE_SLOT: u32 = 10;
 const TRB_ADDR_DEVICE:  u32 = 11;
 const TRB_CFG_EP:       u32 = 12;
 const TRB_EVT_TRANSFER: u32 = 32;
@@ -268,6 +269,19 @@ unsafe fn wait_cmd(ring: *const EvtRing, es: &mut EvtState,
         }
         if past(dl) { return (0xFF, 0); }
     }
+}
+
+// Free a device slot on any enumeration failure after Enable Slot succeeded.
+// Without this, a slot allocated to a device that fails later (bad address,
+// no HID interface, etc.) is never returned to the pool — on real hardware
+// with several enumerable devices, this exhausts MaxSlotsEn and starves out
+// every port enumerated afterward with "No Slots Available" (cc=9), even
+// though those later ports may hold the actual keyboard.
+unsafe fn disable_slot(cmd_ring: *mut CmdRing, cs: &mut CmdState,
+                       evt_ring: *const EvtRing, es: &mut EvtState,
+                       rt: usize, evt_ring_phys: usize, db: usize, slot: u8) {
+    cmd_push(cmd_ring, cs, [0, 0, 0, (TRB_DISABLE_SLOT << 10) | ((slot as u32) << 24)]);
+    let _ = wait_cmd(evt_ring, es, rt, evt_ring_phys, db, 1_000_000);
 }
 
 // ── EP0 control transfer ──────────────────────────────────────────────────────
@@ -581,7 +595,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     }
 
     // ── Controller configuration ──────────────────────────────────────────────
-    wr32(op, OP_CONFIG,  2_u32.min(max_slots as u32)); // max 2 device slots
+    wr32(op, OP_CONFIG, max_slots as u32); // enable all slots the controller reports
     wr64_lo(op, OP_DCBAAP, dcbaa_phys as u64);
     wr64_lo(op, OP_CRCR, cmd_ring_phys as u64 | 1); // RCS=1; lo written first so HI write commits
 
@@ -685,6 +699,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         if cc != CC_SUCCESS {
             crate::serial_println!("[XHCI] slot {} Address Device failed cc={}", slot, cc);
             crate::println!(       "[XHCI] slot {} Address Device failed cc={}", slot, cc);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         crate::serial_println!("[XHCI] slot {} addressed", slot);
@@ -701,6 +716,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         );
         if !dev_desc_ok {
             crate::serial_println!("[XHCI] slot {} GET_DESCRIPTOR(Device) failed", slot);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         crate::serial_println!(
@@ -718,7 +734,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
             [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 9, 0],
             desc_buf as *mut u8, 9,
         );
-        if !cfg_ok { continue; }
+        if !cfg_ok {
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
         let total_len = ((*desc_buf)[2] as u16) | (((*desc_buf)[3] as u16) << 8);
         let fetch_len = total_len.min(512);
 
@@ -736,6 +755,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         if ep_info.is_none() {
             crate::serial_println!("[XHCI] slot {} not a HID boot keyboard", slot);
             crate::println!(       "[XHCI] slot {} not a HID boot keyboard", slot);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         let (cfg_val, iface, ep_addr, max_pkt, ival) = ep_info.unwrap();
@@ -804,6 +824,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         if cc != CC_SUCCESS {
             crate::serial_println!("[XHCI] Configure Endpoint failed");
             crate::println!(       "[XHCI] Configure Endpoint failed");
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
 
