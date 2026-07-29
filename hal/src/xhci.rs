@@ -480,11 +480,14 @@ unsafe fn arm_kbd_ep_raw(
         (TRB_NORMAL << 10) | (1 << 5) | cycle,
     ];
 
-    // Update Link TRB cycle to match so consumer can wrap correctly
-    r.t[link_idx].dw[3] = (r.t[link_idx].dw[3] & !1) | cycle;
-
     let new_enq = enq + 1;
     if new_enq == link_idx {
+        // Wrapping: mark the Link TRB valid for the cycle the xHC is still on,
+        // so it recognizes the TRB, follows it, and flips its own cycle state.
+        // Must only happen here — stamping this on every call (as before)
+        // zeroes the bit ahead of the xHC actually traversing it, which
+        // deadlocks the ring the moment the xHC reaches index link_idx.
+        r.t[link_idx].dw[3] = (r.t[link_idx].dw[3] & !1) | cycle;
         (0, cycle ^ 1)
     } else {
         (new_enq, cycle)
