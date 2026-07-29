@@ -6,7 +6,7 @@ OVMF_CODE := /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS := /usr/share/OVMF/OVMF_VARS_4M.fd
 OVMF      := /usr/share/ovmf/OVMF.fd
 
-.PHONY: all kernel initrd image run run-uefi usb clean test test-unit test-integration
+.PHONY: all kernel initrd image run run-uefi run-xhci usb clean test test-unit test-integration
 
 all: image
 
@@ -43,6 +43,27 @@ run-uefi: image
 		-machine q35 \
 		$$PFLASH \
 		-drive format=raw,file=$(UEFI_IMG) \
+		-serial stdio \
+		-no-reboot \
+		-m 128M
+
+run-xhci: image
+	@if [ ! -f "$(OVMF_CODE)" ] && [ ! -f "$(OVMF)" ]; then \
+		echo "ERROR: OVMF firmware not found."; exit 1; \
+	fi; \
+	if [ -f "$(OVMF_CODE)" ] && [ -f "$(OVMF_VARS)" ]; then \
+		cp $(OVMF_VARS) target/OVMF_VARS.fd; \
+		PFLASH="-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) -drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
+	else \
+		cp $(OVMF) target/OVMF_VARS.fd; \
+		PFLASH="-drive if=pflash,format=raw,file=target/OVMF_VARS.fd"; \
+	fi; \
+	qemu-system-x86_64 \
+		-machine q35 \
+		$$PFLASH \
+		-drive format=raw,file=$(UEFI_IMG) \
+		-device qemu-xhci,id=xhci \
+		-device usb-kbd,bus=xhci.0 \
 		-serial stdio \
 		-no-reboot \
 		-m 128M
