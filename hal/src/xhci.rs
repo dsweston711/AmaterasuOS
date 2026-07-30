@@ -500,24 +500,56 @@ fn find_hid_kbd_ep(cfg: &[u8]) -> Option<(u8, u8, u8, u16, u8)> {
 
 // ── Port reset ────────────────────────────────────────────────────────────────
 
+// PED=1 alone is not sufficient evidence a port is actually usable: a port
+// can complete the reset handshake (PRC clears, PED sets) while its link
+// training stalls in a non-U0 state. Observed on real hardware: every Full
+// Speed port reported PED=1 after reset yet sat at PLS=7 (Polling) both
+// before and after every subsequent real bus transaction, which explains
+// why those transactions never moved a single byte -- the link was never
+// actually up. Retry the reset a few times if PLS doesn't reach U0.
 unsafe fn port_reset(op: usize, port1: usize) -> bool {
     let base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
-    // Power on if not already
-    if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
-    // Issue reset (preserve PP, clear change bits)
-    let sc = rd32(base, 0) & !PORTSC_CHANGE_BITS;
-    wr32(base, 0, (sc | PORTSC_PR) & !PORTSC_PED);
-    let dl = deadline_cycles(500_000);
-    loop {
-        let sc = rd32(base, 0);
-        if sc & PORTSC_PRC != 0 {
-            // Clear PRC and other change bits
-            wr32(base, 0, (sc & !PORTSC_CHANGE_BITS) | PORTSC_PRC);
-            return sc & PORTSC_PED != 0; // return whether port enabled after reset
+    for attempt in 0..3 {
+        // Power on if not already
+        if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
+        // Issue reset (preserve PP, clear change bits)
+        let sc = rd32(base, 0) & !PORTSC_CHANGE_BITS;
+        wr32(base, 0, (sc | PORTSC_PR) & !PORTSC_PED);
+        let dl = deadline_cycles(500_000);
+        let mut prc_seen = false;
+        loop {
+            let sc = rd32(base, 0);
+            if sc & PORTSC_PRC != 0 {
+                // Clear PRC and other change bits
+                wr32(base, 0, (sc & !PORTSC_CHANGE_BITS) | PORTSC_PRC);
+                prc_seen = true;
+                break;
+            }
+            if past(dl) { break; }
+            core::hint::spin_loop();
         }
-        if past(dl) { crate::serial_println!("[XHCI] port {} reset timeout", port1); return false; }
-        core::hint::spin_loop();
+        if !prc_seen {
+            crate::serial_println!("[XHCI] port {} reset timeout (attempt {})", port1, attempt);
+            continue;
+        }
+
+        // Reset bookkeeping completed -- now confirm the link actually
+        // reached U0 before trusting this port at all.
+        let dl2 = deadline_cycles(100_000);
+        loop {
+            let sc = rd32(base, 0);
+            let pls = (sc >> 5) & 0xF;
+            if pls == 0 { return sc & PORTSC_PED != 0; }
+            if past(dl2) {
+                crate::serial_println!("[XHCI] port {} stuck at PLS={} after reset (attempt {})", port1, pls, attempt);
+                crate::println!(       "[XHCI] port {} stuck at PLS={} after reset (attempt {})", port1, pls, attempt);
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        // Didn't reach U0 -- loop around and retry the whole reset.
     }
+    false
 }
 
 // ── Input context builders ─────────────────────────────────────────────────────
