@@ -363,9 +363,10 @@ unsafe fn ep0_doorbell(db: usize, slot: usize) {
 }
 
 // Wait for a Transfer Event from EP0. Returns completion code.
+// Returns (completion code, residual/untransferred byte count, event's TRB pointer).
 unsafe fn ep0_wait_xfer(evt: *const EvtRing, es: &mut EvtState,
                         rt: usize, ep: usize, slot: usize,
-                        db: usize, timeout_us: u64) -> u8 {
+                        db: usize, timeout_us: u64) -> (u8, u32, u64) {
     ep0_doorbell(db, slot);
     let dl = deadline_cycles(timeout_us);
     loop {
@@ -374,11 +375,14 @@ unsafe fn ep0_wait_xfer(evt: *const EvtRing, es: &mut EvtState,
             if trb_type == TRB_EVT_TRANSFER {
                 let s = ((dw[3] >> 24) & 0xFF) as usize;
                 if s == slot {
-                    return ((dw[2] >> 24) & 0xFF) as u8;
+                    let cc = ((dw[2] >> 24) & 0xFF) as u8;
+                    let residual = dw[2] & 0xFF_FFFF;
+                    let ptr = ((dw[1] as u64) << 32) | (dw[0] as u64);
+                    return (cc, residual, ptr);
                 }
             }
         }
-        if past(dl) { return 0xFF; }
+        if past(dl) { return (0xFF, 0, 0); }
     }
 }
 
@@ -393,6 +397,8 @@ unsafe fn ctrl_in(
 ) -> bool {
     let po = PHYS_OFF.load(Ordering::Relaxed);
     let buf_phys = buf as usize - po;
+    let ep0_phys = ep0 as usize - po;
+    let start_enq = es.enq as u64;
 
     // Setup Stage TRB: immediate data, TRT=3 (IN data stage)
     let setup_lo = u32::from_le_bytes([setup[0], setup[1], setup[2], setup[3]]);
@@ -406,7 +412,22 @@ unsafe fn ctrl_in(
     // Status Stage TRB: OUT direction (opposite of data), IOC=1
     ep0_push(ep0, es, [0, 0, 0, (TRB_STATUS << 10) | (1 << 5)]);
 
-    let cc = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    let (cc, residual, ptr) = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    if cc != CC_SUCCESS && cc != CC_SHORT_PKT {
+        let trb_idx: u64 = if ptr >= ep0_phys as u64 { (ptr - ep0_phys as u64) / 16 } else { u64::MAX };
+        let stage = if trb_idx == start_enq { "Setup" }
+            else if trb_idx == start_enq + 1 { "Data" }
+            else if trb_idx == start_enq + 2 { "Status" }
+            else { "?" };
+        crate::serial_println!(
+            "[XHCI] ctrl_in FAILED cc={} residual={} stage={} trb_idx={}",
+            cc, residual, stage, trb_idx
+        );
+        crate::println!(
+            "[XHCI] ctrl_in FAILED cc={} residual={} stage={} trb_idx={}",
+            cc, residual, stage, trb_idx
+        );
+    }
     cc == CC_SUCCESS || cc == CC_SHORT_PKT
 }
 
@@ -427,7 +448,11 @@ unsafe fn ctrl_out(
     // Status Stage TRB: IN direction, IOC=1
     ep0_push(ep0, es, [0, 0, 0, (TRB_STATUS << 10) | (1 << 16) | (1 << 5)]);
 
-    let cc = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    let (cc, residual, _ptr) = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    if cc != CC_SUCCESS && cc != CC_SHORT_PKT {
+        crate::serial_println!("[XHCI] ctrl_out FAILED cc={} residual={}", cc, residual);
+        crate::println!(       "[XHCI] ctrl_out FAILED cc={} residual={}", cc, residual);
+    }
     cc == CC_SUCCESS || cc == CC_SHORT_PKT
 }
 
