@@ -817,6 +817,17 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
             continue;
         }
 
+        // Enable Slot / Address Device(BSR=1) never touch the actual USB wire —
+        // they're xHC-internal bookkeeping. This is the first real bus
+        // transaction attempted for this device, so check the link is
+        // actually in U0 (operational) right now, not just PED=1 ("enabled"
+        // per port bookkeeping, which doesn't guarantee the link itself is
+        // ready to carry data).
+        let sc_pre = rd32(op + OP_PORTSC_BASE + 0x10 * (port1 - 1), 0);
+        let pls_pre = (sc_pre >> 5) & 0xF;
+        crate::serial_println!("[XHCI] slot {} pre-transfer portsc={:#010x} PLS={}", slot, sc_pre, pls_pre);
+        crate::println!(       "[XHCI] slot {} pre-transfer portsc={:#010x} PLS={}", slot, sc_pre, pls_pre);
+
         // Read just the first 8 bytes of the device descriptor at address 0 —
         // byte 7 is the device's real bMaxPacketSize0 (legitimately 8/16/32/64
         // for Full Speed; our initial guess of 8 is always safe for this one
@@ -828,6 +839,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
             desc_buf as *mut u8, 8,
         );
         if !mps0_ok {
+            let sc_post = rd32(op + OP_PORTSC_BASE + 0x10 * (port1 - 1), 0);
+            let pls_post = (sc_post >> 5) & 0xF;
+            crate::serial_println!("[XHCI] slot {} post-fail portsc={:#010x} PLS={}", slot, sc_post, pls_post);
+            crate::println!(       "[XHCI] slot {} post-fail portsc={:#010x} PLS={}", slot, sc_post, pls_post);
             crate::serial_println!("[XHCI] slot {} GET_DESCRIPTOR(Device,8) at default address failed", slot);
             crate::println!(       "[XHCI] slot {} GET_DESCRIPTOR(Device,8) at default address failed", slot);
             disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
