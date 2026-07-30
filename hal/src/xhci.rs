@@ -180,6 +180,52 @@ unsafe fn bios_handoff(cap: usize) {
     }
 }
 
+// Dump each Supported Protocol Extended Capability (xHCI §7.2). We assume the
+// legacy default PSI mapping (1=FS, 2=LS, 3=HS, 4=SS) when writing the Slot
+// Context Speed field from PORTSC.Speed, but that mapping is only guaranteed
+// when the controller does NOT define its own PSI table here (PSIC=0). If a
+// real controller defines a non-default table, every Address Device for a
+// device using a remapped PSI value would carry the wrong Speed field —
+// diagnostic only, to confirm or rule this out on real hardware (issue #155).
+unsafe fn dump_supported_protocols(cap: usize) {
+    let hccparams1 = rd32(cap, CAP_HCCPARAMS1);
+    let xecp_words = (hccparams1 >> 16) & 0xFFFF;
+    if xecp_words == 0 { return; }
+
+    let mut ptr = cap + xecp_words as usize * 4;
+    loop {
+        let hdr = rd32(ptr, 0);
+        if (hdr & 0xFF) == 2 {
+            let major = (hdr >> 24) & 0xFF;
+            let minor = (hdr >> 16) & 0xFF;
+            let dw2 = rd32(ptr, 8);
+            let port_off = dw2 & 0xFF;
+            let port_cnt = (dw2 >> 8) & 0xFF;
+            let psic = (dw2 >> 28) & 0xF;
+            crate::serial_println!(
+                "[XHCI] SupportedProto rev={}.{} ports={}..{} PSIC={}",
+                major, minor, port_off, port_off + port_cnt - 1, psic
+            );
+            crate::println!(
+                "[XHCI] SupportedProto rev={}.{} ports={}..{} PSIC={}",
+                major, minor, port_off, port_off + port_cnt - 1, psic
+            );
+            for i in 0..psic {
+                let psi = rd32(ptr, 16 + (i as usize) * 4);
+                let psi_id   = psi & 0xF;
+                let psi_exp  = (psi >> 4) & 0x3;
+                let psi_mant = (psi >> 16) & 0xFFFF;
+                let unit = match psi_exp { 0 => "b/s", 1 => "Kb/s", 2 => "Mb/s", _ => "Gb/s" };
+                crate::serial_println!("[XHCI]   PSI[{}]: id={} = {} {}", i, psi_id, psi_mant, unit);
+                crate::println!(       "[XHCI]   PSI[{}]: id={} = {} {}", i, psi_id, psi_mant, unit);
+            }
+        }
+        let next = (hdr >> 8) & 0xFF;
+        if next == 0 { break; }
+        ptr += next as usize * 4;
+    }
+}
+
 // ── Controller reset ─────────────────────────────────────────────────────────
 
 unsafe fn xhci_reset(op: usize) -> bool {
@@ -552,6 +598,7 @@ pub fn init(phys_off: usize) {
 
 unsafe fn init_unsafe(cap: usize, po: usize) {
     bios_handoff(cap);
+    dump_supported_protocols(cap);
 
     let caplength   = rd8(cap, CAP_CAPLENGTH) as usize;
     let op          = cap + caplength;
