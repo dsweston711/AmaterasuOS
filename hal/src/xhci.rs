@@ -242,6 +242,16 @@ unsafe fn evt_wait(ring: *const EvtRing, st: &mut EvtState,
         let dw = r.t[st.deq].dw;
         if (dw[3] & 1) == st.cycle {
             let result = dw;
+            crate::serial_println!(
+                "[XHCI EVT] type={} cc={} slot={} ptr={:#010x}:{:#010x}",
+                (dw[3] >> 10) & 0x3F, (dw[2] >> 24) & 0xFF, (dw[3] >> 24) & 0xFF,
+                dw[1], dw[0]
+            );
+            crate::println!(
+                "[XHCI EVT] type={} cc={} slot={} ptr={:#010x}:{:#010x}",
+                (dw[3] >> 10) & 0x3F, (dw[2] >> 24) & 0xFF, (dw[3] >> 24) & 0xFF,
+                dw[1], dw[0]
+            );
             st.deq += 1;
             if st.deq >= EVT_N { st.deq = 0; st.cycle ^= 1; }
             // Update ERDP (clear EHB bit 3 by writing 1 to it)
