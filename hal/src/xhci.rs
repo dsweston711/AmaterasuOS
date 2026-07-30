@@ -749,17 +749,29 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     let mut cs = CmdState { enq: 0, cycle: 1 };
     let mut es = EvtState { deq: 0, cycle: 1 };
 
-    // Power on every port before checking connect status. On controllers with
-    // HCCPARAMS1.PPC=1 (software port power control — the common case on real
-    // silicon), ports come out of HCRST unpowered and PORTSC.CCS reads 0 until
-    // PP is set; port_reset() used to be the only place that set PP, but it
-    // was only reached *after* a CCS check that could never pass. QEMU's xHC
-    // model doesn't gate CCS on PP, so this was invisible until tested on
-    // real hardware. Settle time is USB2.0 §7.1.7.3's power-on-to-power-good.
+    // Force a genuine power cycle on every port before checking connect
+    // status -- not just "turn on if off". HCRST does not guarantee PP
+    // resets to 0 on all implementations, so a port left powered from
+    // firmware's own initialization may never see a real OFF->ON transition
+    // here. Real hardware showed every Full Speed port stuck at PLS=7
+    // (Polling, an intermediate link-training state) even after multiple
+    // Port Reset retries -- a genuine power cycle is the standard way to
+    // clear a PHY wedged mid-training that a warm reset alone doesn't reach.
+    // Confirmed via firmware/BIOS setup that the keyboard and port are
+    // otherwise fully functional, so this is squarely our own init sequence.
     for port1 in 1..=max_ports {
         let base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
-        if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
+        let sc = rd32(base, 0) & !PORTSC_CHANGE_BITS;
+        wr32(base, 0, sc & !PORTSC_PP);
     }
+    let dl_off = deadline_cycles(10_000);
+    while !past(dl_off) { core::hint::spin_loop(); }
+    for port1 in 1..=max_ports {
+        let base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
+        let sc = rd32(base, 0) & !PORTSC_CHANGE_BITS;
+        wr32(base, 0, sc | PORTSC_PP);
+    }
+    // Settle time is USB2.0 §7.1.7.3's power-on-to-power-good.
     let dl = deadline_cycles(20_000);
     while !past(dl) { core::hint::spin_loop(); }
 
