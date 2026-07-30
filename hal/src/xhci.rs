@@ -61,6 +61,7 @@ const TRB_ENABLE_SLOT:  u32 = 9;
 const TRB_DISABLE_SLOT: u32 = 10;
 const TRB_ADDR_DEVICE:  u32 = 11;
 const TRB_CFG_EP:       u32 = 12;
+const TRB_EVAL_CTX:     u32 = 13;
 const TRB_EVT_TRANSFER: u32 = 32;
 const TRB_EVT_CMD:      u32 = 33;
 const _TRB_EVT_PORT:    u32 = 34;
@@ -771,24 +772,84 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         // Configure input context for Address Device
         setup_addr_input_ctx(in_ctx, ep0_ring_phys, speed, port1);
 
-        // Address Device command (BSR=0 → sends SET_ADDRESS)
+        let mut ep0s = Ep0State { enq: 0, cycle: 1 };
+
+        // Address Device with BSR=1 ("Block Set address Request"): transitions
+        // the slot to Default state and lets us talk to the device at address 0
+        // WITHOUT sending SET_ADDRESS yet. No real bus transaction occurs here,
+        // so this should succeed even if our EP0 MaxPacketSize0 guess is wrong.
         cmd_push(cmd_ring, &mut cs, [
             in_ctx_phys as u32,
             (in_ctx_phys >> 32) as u32,
             0,
-            (TRB_ADDR_DEVICE << 10) | ((slot as u32) << 24),
+            (TRB_ADDR_DEVICE << 10) | (1 << 9) | ((slot as u32) << 24), // BSR=1
+        ]);
+        let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
+        crate::serial_println!("[XHCI] slot {} Address Device(BSR=1) cc={}", slot, cc);
+        crate::println!(       "[XHCI] slot {} Address Device(BSR=1) cc={}", slot, cc);
+        if cc != CC_SUCCESS {
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
+
+        // Read just the first 8 bytes of the device descriptor at address 0 —
+        // byte 7 is the device's real bMaxPacketSize0 (legitimately 8/16/32/64
+        // for Full Speed; our initial guess of 8 is always safe for this one
+        // read regardless of the real value, per spec).
+        let mps0_ok = ctrl_in(
+            ep0_ring, &mut ep0s, evt_ring, &mut es,
+            rt, evt_ring_phys, db, slot as usize,
+            [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 8, 0],
+            desc_buf as *mut u8, 8,
+        );
+        if !mps0_ok {
+            crate::serial_println!("[XHCI] slot {} GET_DESCRIPTOR(Device,8) at default address failed", slot);
+            crate::println!(       "[XHCI] slot {} GET_DESCRIPTOR(Device,8) at default address failed", slot);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
+        let real_mps0 = (*desc_buf)[7] as u32;
+        crate::serial_println!("[XHCI] slot {} real bMaxPacketSize0={}", slot, real_mps0);
+        crate::println!(       "[XHCI] slot {} real bMaxPacketSize0={}", slot, real_mps0);
+
+        // Evaluate Context: update only the EP0 context (A1) with the real MPS,
+        // leaving the Slot Context (A0) alone.
+        (*in_ctx).e[2][1] = (3 << 1) | (4 << 3) | (real_mps0 << 16);
+        (*in_ctx).e[0][0] = 0;
+        (*in_ctx).e[0][1] = 0b10; // A1 only
+        cmd_push(cmd_ring, &mut cs, [
+            in_ctx_phys as u32,
+            (in_ctx_phys >> 32) as u32,
+            0,
+            (TRB_EVAL_CTX << 10) | ((slot as u32) << 24),
+        ]);
+        let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
+        crate::serial_println!("[XHCI] slot {} Evaluate Context cc={}", slot, cc);
+        crate::println!(       "[XHCI] slot {} Evaluate Context cc={}", slot, cc);
+        if cc != CC_SUCCESS {
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
+
+        // Address Device again with BSR=0 — this actually sends SET_ADDRESS,
+        // now with the device's real MaxPacketSize0 in place. Address Device
+        // requires A0+A1 both set regardless of what Evaluate Context needed.
+        (*in_ctx).e[0][1] = 0b11;
+        cmd_push(cmd_ring, &mut cs, [
+            in_ctx_phys as u32,
+            (in_ctx_phys >> 32) as u32,
+            0,
+            (TRB_ADDR_DEVICE << 10) | ((slot as u32) << 24), // BSR=0
         ]);
         let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
         if cc != CC_SUCCESS {
-            crate::serial_println!("[XHCI] slot {} Address Device failed cc={}", slot, cc);
-            crate::println!(       "[XHCI] slot {} Address Device failed cc={}", slot, cc);
+            crate::serial_println!("[XHCI] slot {} Address Device(BSR=0) failed cc={}", slot, cc);
+            crate::println!(       "[XHCI] slot {} Address Device(BSR=0) failed cc={}", slot, cc);
             disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         crate::serial_println!("[XHCI] slot {} addressed", slot);
         crate::println!(       "[XHCI] slot {} addressed", slot);
-
-        let mut ep0s = Ep0State { enq: 0, cycle: 1 };
 
         // GET_DESCRIPTOR(Device, 18 bytes)
         let dev_desc_ok = ctrl_in(
