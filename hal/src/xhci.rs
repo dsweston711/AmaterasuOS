@@ -242,6 +242,16 @@ unsafe fn xhci_reset(op: usize) -> bool {
     }
     // Reset
     wr32(op, OP_USBCMD, 1 << 1);
+    // Real Intel xHCI controllers require a 1ms delay after setting CMD_RESET
+    // and before any further HC register access, to let the HC complete the
+    // reset operation internally (Linux's xhci.c carries this exact quirk for
+    // XHCI_INTEL_HOST, citing rare system hangs without it). This isn't in
+    // the generic xHCI spec at all -- omitting it plausibly explains deeper
+    // internal state (e.g. USB2 PHY calibration) not completing its reset
+    // correctly, which would show up later as ports stuck mid-link-training
+    // (issue #155: every Full Speed port stuck at PLS=7/Polling).
+    let dl_intel = deadline_cycles(1_000);
+    while !past(dl_intel) { core::hint::spin_loop(); }
     let dl = deadline_cycles(100_000);
     loop {
         if rd32(op, OP_USBCMD) & (1 << 1) == 0 { break; }
