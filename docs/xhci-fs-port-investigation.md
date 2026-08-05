@@ -124,20 +124,29 @@ bring-up sequence — something firmware does that we don't.
 - **The actual desktop Z390/300-series H-series PCH datasheet** (not the LP/mobile one) may
   have BIOS-writer's-guide-level detail the LP datasheet doesn't. Worth finding if available
   without an NDA.
-- ~~Hub/Route String topology~~ — **weaker lead than originally thought.** Route
-  String/TT fields only matter for *addressing/routing* a device once its link has already
-  trained to U0; a hub's own upstream connection to the root port still has to complete
-  ordinary link training first, same as any device would. Since we're stuck *before* U0 is
-  ever reached, a hub downstream of these ports wouldn't actually explain the PLS=7 stall.
-  Not a priority avenue anymore.
+- ~~Hub/Route String topology~~ — **weaker lead than originally thought, but confirmed real.**
+  Route String/TT fields only matter for *addressing/routing* a device once its link has
+  already trained to U0; a hub's own upstream connection to the root port still has to
+  complete ordinary link training first, same as any device would. Since we're stuck
+  *before* U0 is ever reached, a hub downstream of these ports doesn't explain the PLS=7
+  stall. **Update 2026-08-04:** the BIOS USB Configuration screen (Settings\Advanced\USB
+  Configuration) confirms `3 Keyboards, 1 Mouse, 1 Hub` connected — there genuinely is a hub
+  in the topology, almost certainly the Keychron's own built-in passthrough hub ("3
+  Keyboards" is very likely one physical keyboard enumerating as multiple HID interfaces:
+  boot keyboard + consumer-control + possibly vendor/NKRO). Doesn't reopen this as the
+  explanation for the U0 stall, but means hub support (which the driver has none of) will
+  separately be needed once/if the stall is fixed, to actually reach the keyboard sitting
+  behind the hub rather than just the hub itself.
 - **A serial adapter** (~$8-15, CP2102 preferred) would help enormously — we're currently
   limited to whatever fits on the framebuffer, one line at a time, hand-transcribed or
   photographed. Real-time full logs would let us correlate timing much more precisely.
 - **Warm Reset (WPR) vs Port Reset (PR)** for the SuperSpeed tier specifically was
   never implemented — irrelevant to the FS stall, but relevant to the still-open SS
   `bMaxPacketSize0` encoding bug noted above.
-- Have not yet tried: comparing behavior with **Legacy USB Support disabled** in BIOS (README
-  says it must be enabled for keyboard input to work at the OS level, but its effect on our
-  own xHC bring-up sequence specifically has never been isolated as a variable).
+- ~~Legacy USB Support disabled in BIOS~~ — **tried 2026-08-04, inconclusive/blocked.**
+  Disabling it made the USB flash drive itself disappear as a boot option entirely — this
+  setting evidently governs USB boot-device visibility broadly on this board, not just
+  keyboard/mouse emulation, so the machine couldn't reach AmaterasuOS at all with it off.
+  Re-enabled. Not a testable variable on this board without a non-USB boot path.
 - Have not yet tried booting **without** the USB flash drive also plugged in (to rule out any
   interaction between two simultaneously-enumerating devices during our port loop).
