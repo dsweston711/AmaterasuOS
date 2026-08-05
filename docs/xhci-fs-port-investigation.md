@@ -124,9 +124,12 @@ bring-up sequence — something firmware does that we don't.
 - **The actual desktop Z390/300-series H-series PCH datasheet** (not the LP/mobile one) may
   have BIOS-writer's-guide-level detail the LP datasheet doesn't. Worth finding if available
   without an NDA.
-- **Hub/Route String topology** — the driver assumes every device is a direct child of an
-  xHC root port (Route String always 0, no TT/hub fields ever set). Never actually tested
-  whether any of these "root" ports are secretly behind an onboard/internal hub chip.
+- ~~Hub/Route String topology~~ — **weaker lead than originally thought.** Route
+  String/TT fields only matter for *addressing/routing* a device once its link has already
+  trained to U0; a hub's own upstream connection to the root port still has to complete
+  ordinary link training first, same as any device would. Since we're stuck *before* U0 is
+  ever reached, a hub downstream of these ports wouldn't actually explain the PLS=7 stall.
+  Not a priority avenue anymore.
 - **A serial adapter** (~$8-15, CP2102 preferred) would help enormously — we're currently
   limited to whatever fits on the framebuffer, one line at a time, hand-transcribed or
   photographed. Real-time full logs would let us correlate timing much more precisely.
