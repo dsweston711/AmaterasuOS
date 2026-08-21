@@ -32,7 +32,7 @@ const OP_CONFIG:  usize = 0x38;
 const OP_PORTSC_BASE: usize = 0x400;
 
 // ── Runtime interrupter 0 offsets (from rt_base + 0x20) ─────────────────────
-const _IR_IMAN:  usize = 0x00;
+const IR_IMAN:   usize = 0x00;
 const _IR_IMOD:  usize = 0x04;
 const IR_ERSTSZ: usize = 0x08;
 // offset 0x0C reserved
@@ -58,8 +58,10 @@ const TRB_DATA:      u32 = 3;
 const TRB_STATUS:    u32 = 4;
 const TRB_LINK:      u32 = 6;
 const TRB_ENABLE_SLOT:  u32 = 9;
+const TRB_DISABLE_SLOT: u32 = 10;
 const TRB_ADDR_DEVICE:  u32 = 11;
 const TRB_CFG_EP:       u32 = 12;
+const TRB_EVAL_CTX:     u32 = 13;
 const TRB_EVT_TRANSFER: u32 = 32;
 const TRB_EVT_CMD:      u32 = 33;
 const _TRB_EVT_PORT:    u32 = 34;
@@ -101,6 +103,7 @@ unsafe fn alloc_zeroed<T>() -> *mut T {
 // ── Global state for keyboard polling ────────────────────────────────────────
 
 static KBD_READY:     AtomicBool  = AtomicBool::new(false);
+static KBD_DBG_COUNT: AtomicUsize = AtomicUsize::new(0); // reports logged (capped at 16)
 static KBD_SLOT:      AtomicUsize = AtomicUsize::new(0);
 static KBD_EP_DB:     AtomicU32   = AtomicU32::new(0);   // doorbell target (ep context index)
 static KBD_DB_BASE:   AtomicUsize = AtomicUsize::new(0);
@@ -129,11 +132,7 @@ static KBD_BUF_PHYS:  AtomicUsize = AtomicUsize::new(0);
     ((base + off    ) as *mut u32).write_volatile(v as u32);
     ((base + off + 4) as *mut u32).write_volatile((v >> 32) as u32);
 }
-// hi dword first (required for CRCR — lo write activates the ring)
-#[inline] unsafe fn wr64_hi(base: usize, off: usize, v: u64) {
-    ((base + off + 4) as *mut u32).write_volatile((v >> 32) as u32);
-    ((base + off    ) as *mut u32).write_volatile(v as u32);
-}
+
 #[inline] fn phys(virt: usize, po: usize) -> usize { virt - po }
 #[inline] unsafe fn rd8(base: usize, off: usize) -> u8 {
     ((base + off) as *const u8).read_volatile()
@@ -182,6 +181,52 @@ unsafe fn bios_handoff(cap: usize) {
     }
 }
 
+// Dump each Supported Protocol Extended Capability (xHCI §7.2). We assume the
+// legacy default PSI mapping (1=FS, 2=LS, 3=HS, 4=SS) when writing the Slot
+// Context Speed field from PORTSC.Speed, but that mapping is only guaranteed
+// when the controller does NOT define its own PSI table here (PSIC=0). If a
+// real controller defines a non-default table, every Address Device for a
+// device using a remapped PSI value would carry the wrong Speed field —
+// diagnostic only, to confirm or rule this out on real hardware (issue #155).
+unsafe fn dump_supported_protocols(cap: usize) {
+    let hccparams1 = rd32(cap, CAP_HCCPARAMS1);
+    let xecp_words = (hccparams1 >> 16) & 0xFFFF;
+    if xecp_words == 0 { return; }
+
+    let mut ptr = cap + xecp_words as usize * 4;
+    loop {
+        let hdr = rd32(ptr, 0);
+        if (hdr & 0xFF) == 2 {
+            let major = (hdr >> 24) & 0xFF;
+            let minor = (hdr >> 16) & 0xFF;
+            let dw2 = rd32(ptr, 8);
+            let port_off = dw2 & 0xFF;
+            let port_cnt = (dw2 >> 8) & 0xFF;
+            let psic = (dw2 >> 28) & 0xF;
+            crate::serial_println!(
+                "[XHCI] SupportedProto rev={}.{} ports={}..{} PSIC={}",
+                major, minor, port_off, port_off + port_cnt - 1, psic
+            );
+            crate::println!(
+                "[XHCI] SupportedProto rev={}.{} ports={}..{} PSIC={}",
+                major, minor, port_off, port_off + port_cnt - 1, psic
+            );
+            for i in 0..psic {
+                let psi = rd32(ptr, 16 + (i as usize) * 4);
+                let psi_id   = psi & 0xF;
+                let psi_exp  = (psi >> 4) & 0x3;
+                let psi_mant = (psi >> 16) & 0xFFFF;
+                let unit = match psi_exp { 0 => "b/s", 1 => "Kb/s", 2 => "Mb/s", _ => "Gb/s" };
+                crate::serial_println!("[XHCI]   PSI[{}]: id={} = {} {}", i, psi_id, psi_mant, unit);
+                crate::println!(       "[XHCI]   PSI[{}]: id={} = {} {}", i, psi_id, psi_mant, unit);
+            }
+        }
+        let next = (hdr >> 8) & 0xFF;
+        if next == 0 { break; }
+        ptr += next as usize * 4;
+    }
+}
+
 // ── Controller reset ─────────────────────────────────────────────────────────
 
 unsafe fn xhci_reset(op: usize) -> bool {
@@ -197,6 +242,16 @@ unsafe fn xhci_reset(op: usize) -> bool {
     }
     // Reset
     wr32(op, OP_USBCMD, 1 << 1);
+    // Real Intel xHCI controllers require a 1ms delay after setting CMD_RESET
+    // and before any further HC register access, to let the HC complete the
+    // reset operation internally (Linux's xhci.c carries this exact quirk for
+    // XHCI_INTEL_HOST, citing rare system hangs without it). This isn't in
+    // the generic xHCI spec at all -- omitting it plausibly explains deeper
+    // internal state (e.g. USB2 PHY calibration) not completing its reset
+    // correctly, which would show up later as ports stuck mid-link-training
+    // (issue #155: every Full Speed port stuck at PLS=7/Polling).
+    let dl_intel = deadline_cycles(1_000);
+    while !past(dl_intel) { core::hint::spin_loop(); }
     let dl = deadline_cycles(100_000);
     loop {
         if rd32(op, OP_USBCMD) & (1 << 1) == 0 { break; }
@@ -244,6 +299,16 @@ unsafe fn evt_wait(ring: *const EvtRing, st: &mut EvtState,
         let dw = r.t[st.deq].dw;
         if (dw[3] & 1) == st.cycle {
             let result = dw;
+            crate::serial_println!(
+                "[XHCI EVT] type={} cc={} slot={} ptr={:#010x}:{:#010x}",
+                (dw[3] >> 10) & 0x3F, (dw[2] >> 24) & 0xFF, (dw[3] >> 24) & 0xFF,
+                dw[1], dw[0]
+            );
+            crate::println!(
+                "[XHCI EVT] type={} cc={} slot={} ptr={:#010x}:{:#010x}",
+                (dw[3] >> 10) & 0x3F, (dw[2] >> 24) & 0xFF, (dw[3] >> 24) & 0xFF,
+                dw[1], dw[0]
+            );
             st.deq += 1;
             if st.deq >= EVT_N { st.deq = 0; st.cycle ^= 1; }
             // Update ERDP (clear EHB bit 3 by writing 1 to it)
@@ -273,6 +338,19 @@ unsafe fn wait_cmd(ring: *const EvtRing, es: &mut EvtState,
     }
 }
 
+// Free a device slot on any enumeration failure after Enable Slot succeeded.
+// Without this, a slot allocated to a device that fails later (bad address,
+// no HID interface, etc.) is never returned to the pool — on real hardware
+// with several enumerable devices, this exhausts MaxSlotsEn and starves out
+// every port enumerated afterward with "No Slots Available" (cc=9), even
+// though those later ports may hold the actual keyboard.
+unsafe fn disable_slot(cmd_ring: *mut CmdRing, cs: &mut CmdState,
+                       evt_ring: *const EvtRing, es: &mut EvtState,
+                       rt: usize, evt_ring_phys: usize, db: usize, slot: u8) {
+    cmd_push(cmd_ring, cs, [0, 0, 0, (TRB_DISABLE_SLOT << 10) | ((slot as u32) << 24)]);
+    let _ = wait_cmd(evt_ring, es, rt, evt_ring_phys, db, 1_000_000);
+}
+
 // ── EP0 control transfer ──────────────────────────────────────────────────────
 
 struct Ep0State { enq: usize, cycle: u32 }
@@ -295,9 +373,10 @@ unsafe fn ep0_doorbell(db: usize, slot: usize) {
 }
 
 // Wait for a Transfer Event from EP0. Returns completion code.
+// Returns (completion code, residual/untransferred byte count, event's TRB pointer).
 unsafe fn ep0_wait_xfer(evt: *const EvtRing, es: &mut EvtState,
                         rt: usize, ep: usize, slot: usize,
-                        db: usize, timeout_us: u64) -> u8 {
+                        db: usize, timeout_us: u64) -> (u8, u32, u64) {
     ep0_doorbell(db, slot);
     let dl = deadline_cycles(timeout_us);
     loop {
@@ -306,11 +385,14 @@ unsafe fn ep0_wait_xfer(evt: *const EvtRing, es: &mut EvtState,
             if trb_type == TRB_EVT_TRANSFER {
                 let s = ((dw[3] >> 24) & 0xFF) as usize;
                 if s == slot {
-                    return ((dw[2] >> 24) & 0xFF) as u8;
+                    let cc = ((dw[2] >> 24) & 0xFF) as u8;
+                    let residual = dw[2] & 0xFF_FFFF;
+                    let ptr = ((dw[1] as u64) << 32) | (dw[0] as u64);
+                    return (cc, residual, ptr);
                 }
             }
         }
-        if past(dl) { return 0xFF; }
+        if past(dl) { return (0xFF, 0, 0); }
     }
 }
 
@@ -325,6 +407,8 @@ unsafe fn ctrl_in(
 ) -> bool {
     let po = PHYS_OFF.load(Ordering::Relaxed);
     let buf_phys = buf as usize - po;
+    let ep0_phys = ep0 as usize - po;
+    let start_enq = es.enq as u64;
 
     // Setup Stage TRB: immediate data, TRT=3 (IN data stage)
     let setup_lo = u32::from_le_bytes([setup[0], setup[1], setup[2], setup[3]]);
@@ -338,7 +422,22 @@ unsafe fn ctrl_in(
     // Status Stage TRB: OUT direction (opposite of data), IOC=1
     ep0_push(ep0, es, [0, 0, 0, (TRB_STATUS << 10) | (1 << 5)]);
 
-    let cc = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    let (cc, residual, ptr) = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    if cc != CC_SUCCESS && cc != CC_SHORT_PKT {
+        let trb_idx: u64 = if ptr >= ep0_phys as u64 { (ptr - ep0_phys as u64) / 16 } else { u64::MAX };
+        let stage = if trb_idx == start_enq { "Setup" }
+            else if trb_idx == start_enq + 1 { "Data" }
+            else if trb_idx == start_enq + 2 { "Status" }
+            else { "?" };
+        crate::serial_println!(
+            "[XHCI] ctrl_in FAILED cc={} residual={} stage={} trb_idx={}",
+            cc, residual, stage, trb_idx
+        );
+        crate::println!(
+            "[XHCI] ctrl_in FAILED cc={} residual={} stage={} trb_idx={}",
+            cc, residual, stage, trb_idx
+        );
+    }
     cc == CC_SUCCESS || cc == CC_SHORT_PKT
 }
 
@@ -359,7 +458,11 @@ unsafe fn ctrl_out(
     // Status Stage TRB: IN direction, IOC=1
     ep0_push(ep0, es, [0, 0, 0, (TRB_STATUS << 10) | (1 << 16) | (1 << 5)]);
 
-    let cc = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    let (cc, residual, _ptr) = ep0_wait_xfer(evt, evs, rt, evt_phys, slot, db, 500_000);
+    if cc != CC_SUCCESS && cc != CC_SHORT_PKT {
+        crate::serial_println!("[XHCI] ctrl_out FAILED cc={} residual={}", cc, residual);
+        crate::println!(       "[XHCI] ctrl_out FAILED cc={} residual={}", cc, residual);
+    }
     cc == CC_SUCCESS || cc == CC_SHORT_PKT
 }
 
@@ -380,6 +483,14 @@ fn find_hid_kbd_ep(cfg: &[u8]) -> Option<(u8, u8, u8, u16, u8)> {
 
         if btype == 0x04 && blen >= 9 {
             // Interface descriptor
+            crate::serial_println!(
+                "[XHCI] iface {}: class={:#04x} subclass={:#04x} proto={:#04x}",
+                cfg[off+2], cfg[off+5], cfg[off+6], cfg[off+7]
+            );
+            crate::println!(
+                "[XHCI] iface {}: class={:#04x} subclass={:#04x} proto={:#04x}",
+                cfg[off+2], cfg[off+5], cfg[off+6], cfg[off+7]
+            );
             in_hid_kbd = cfg[off+5] == 0x03 && cfg[off+6] == 0x01 && cfg[off+7] == 0x01;
             if in_hid_kbd { iface = cfg[off+2]; }
         } else if btype == 0x05 && blen >= 7 && in_hid_kbd {
@@ -399,24 +510,56 @@ fn find_hid_kbd_ep(cfg: &[u8]) -> Option<(u8, u8, u8, u16, u8)> {
 
 // ── Port reset ────────────────────────────────────────────────────────────────
 
+// PED=1 alone is not sufficient evidence a port is actually usable: a port
+// can complete the reset handshake (PRC clears, PED sets) while its link
+// training stalls in a non-U0 state. Observed on real hardware: every Full
+// Speed port reported PED=1 after reset yet sat at PLS=7 (Polling) both
+// before and after every subsequent real bus transaction, which explains
+// why those transactions never moved a single byte -- the link was never
+// actually up. Retry the reset a few times if PLS doesn't reach U0.
 unsafe fn port_reset(op: usize, port1: usize) -> bool {
     let base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
-    // Power on if not already
-    if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
-    // Issue reset (preserve PP, clear change bits)
-    let sc = rd32(base, 0) & !PORTSC_CHANGE_BITS;
-    wr32(base, 0, (sc | PORTSC_PR) & !PORTSC_PED);
-    let dl = deadline_cycles(500_000);
-    loop {
-        let sc = rd32(base, 0);
-        if sc & PORTSC_PRC != 0 {
-            // Clear PRC and other change bits
-            wr32(base, 0, (sc & !PORTSC_CHANGE_BITS) | PORTSC_PRC);
-            return sc & PORTSC_PED != 0; // return whether port enabled after reset
+    for attempt in 0..3 {
+        // Power on if not already
+        if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
+        // Issue reset (preserve PP, clear change bits)
+        let sc = rd32(base, 0) & !PORTSC_CHANGE_BITS;
+        wr32(base, 0, (sc | PORTSC_PR) & !PORTSC_PED);
+        let dl = deadline_cycles(500_000);
+        let mut prc_seen = false;
+        loop {
+            let sc = rd32(base, 0);
+            if sc & PORTSC_PRC != 0 {
+                // Clear PRC and other change bits
+                wr32(base, 0, (sc & !PORTSC_CHANGE_BITS) | PORTSC_PRC);
+                prc_seen = true;
+                break;
+            }
+            if past(dl) { break; }
+            core::hint::spin_loop();
         }
-        if past(dl) { crate::serial_println!("[XHCI] port {} reset timeout", port1); return false; }
-        core::hint::spin_loop();
+        if !prc_seen {
+            crate::serial_println!("[XHCI] port {} reset timeout (attempt {})", port1, attempt);
+            continue;
+        }
+
+        // Reset bookkeeping completed -- now confirm the link actually
+        // reached U0 before trusting this port at all.
+        let dl2 = deadline_cycles(100_000);
+        loop {
+            let sc = rd32(base, 0);
+            let pls = (sc >> 5) & 0xF;
+            if pls == 0 { return sc & PORTSC_PED != 0; }
+            if past(dl2) {
+                crate::serial_println!("[XHCI] port {} stuck at PLS={} after reset (attempt {})", port1, pls, attempt);
+                crate::println!(       "[XHCI] port {} stuck at PLS={} after reset (attempt {})", port1, pls, attempt);
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        // Didn't reach U0 -- loop around and retry the whole reset.
     }
+    false
 }
 
 // ── Input context builders ─────────────────────────────────────────────────────
@@ -433,9 +576,12 @@ unsafe fn setup_addr_input_ctx(ictx: *mut InCtx, ep0_ring_phys: usize, port_spee
     // EP0 Context (index 2): control endpoint
     // DW1: CErr=3, EPType=4 (Control), MaxPacketSize depends on speed
     let mps: u32 = match port_speed {
-        4 | 5 => 512, // SuperSpeed / SuperSpeedPlus
-        3     => 64,  // High Speed
-        _     => 8,   // Full/Low Speed
+        4 | 5 => 512, // SuperSpeed / SuperSpeedPlus — spec-fixed, no guessing needed
+        3     => 64,  // High Speed — spec-fixed
+        _     => 8,   // Full/Low Speed — safe default guess; see ADR/issue #155 notes:
+                       // trying 64 for Full Speed did not fix real-hardware Address Device
+                       // cc=4 failures, so reverted. Real fix is likely the BSR=1 → read
+                       // descriptor → Evaluate Context → BSR=0 sequence, not a hardcoded guess.
     };
     c[2][1] = (3 << 1) | (4 << 3) | (mps << 16);
     // DW2-3: TR Dequeue Pointer
@@ -482,11 +628,15 @@ unsafe fn arm_kbd_ep_raw(
         8,
         (TRB_NORMAL << 10) | (1 << 5) | cycle,
     ];
-    // Update Link TRB cycle to match so consumer can wrap correctly
-    r.t[link_idx].dw[3] = (r.t[link_idx].dw[3] & !1) | cycle;
 
     let new_enq = enq + 1;
     if new_enq == link_idx {
+        // Wrapping: mark the Link TRB valid for the cycle the xHC is still on,
+        // so it recognizes the TRB, follows it, and flips its own cycle state.
+        // Must only happen here — stamping this on every call (as before)
+        // zeroes the bit ahead of the xHC actually traversing it, which
+        // deadlocks the ring the moment the xHC reaches index link_idx.
+        r.t[link_idx].dw[3] = (r.t[link_idx].dw[3] & !1) | cycle;
         (0, cycle ^ 1)
     } else {
         (new_enq, cycle)
@@ -504,7 +654,11 @@ pub fn init(phys_off: usize) {
 
     let cap = match crate::pci::find_xhci_bar0(phys_off) {
         Some(v) => v,
-        None    => { crate::serial_println!("[XHCI] no controller — keyboard disabled"); return; }
+        None    => {
+            crate::serial_println!("[XHCI] no controller — keyboard disabled");
+            crate::println!(       "[XHCI] no controller — keyboard disabled");
+            return;
+        }
     };
 
     unsafe { init_unsafe(cap, phys_off) };
@@ -512,6 +666,7 @@ pub fn init(phys_off: usize) {
 
 unsafe fn init_unsafe(cap: usize, po: usize) {
     bios_handoff(cap);
+    dump_supported_protocols(cap);
 
     let caplength   = rd8(cap, CAP_CAPLENGTH) as usize;
     let op          = cap + caplength;
@@ -576,9 +731,9 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     }
 
     // ── Controller configuration ──────────────────────────────────────────────
-    wr32(op, OP_CONFIG,  2_u32.min(max_slots as u32)); // max 2 device slots
+    wr32(op, OP_CONFIG, max_slots as u32); // enable all slots the controller reports
     wr64_lo(op, OP_DCBAAP, dcbaa_phys as u64);
-    wr64_hi(op, OP_CRCR, cmd_ring_phys as u64 | 1); // RCS=1
+    wr64_lo(op, OP_CRCR, cmd_ring_phys as u64 | 1); // RCS=1; lo written first so HI write commits
 
     // ── Event ring (interrupter 0) ────────────────────────────────────────────
     (*erst).e[0].addr = evt_ring_phys as u64;
@@ -588,6 +743,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
     wr32(ir0, IR_ERSTSZ, 1);
     wr64_lo(ir0, IR_ERDP, evt_ring_phys as u64);
     wr64_lo(ir0, IR_ERSTBA, erst_phys as u64);
+    wr32(ir0, IR_IMAN, 1 << 1); // IMAN.IE=1: enable interrupter so the xHC posts events
 
     // ── Start the controller ──────────────────────────────────────────────────
     wr32(op, OP_USBCMD, (1 << 2) | 1); // INTE=1 (for IMAN), RUN=1
@@ -597,10 +753,30 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         core::hint::spin_loop();
     }
     crate::serial_println!("[XHCI] controller running");
+    crate::println!(       "[XHCI] controller running");
 
     // ── State for command + event ring operations ─────────────────────────────
     let mut cs = CmdState { enq: 0, cycle: 1 };
     let mut es = EvtState { deq: 0, cycle: 1 };
+
+    // Power on every port before checking connect status. On controllers with
+    // HCCPARAMS1.PPC=1 (software port power control — the common case on real
+    // silicon), ports come out of HCRST unpowered and PORTSC.CCS reads 0 until
+    // PP is set. QEMU's xHC model doesn't gate CCS on PP, so this was
+    // invisible until tested on real hardware.
+    //
+    // A forced real power cycle (PP=0 -> settle -> PP=1) was tried here as an
+    // experiment to clear the Full Speed PLS=7 stall (issue #155) and made
+    // things worse: it dropped the previously-reliable SuperSpeed device to
+    // PLS=4 (Disabled) and no Full Speed port even reconnected within the
+    // settle window at all. Reverted back to the non-destructive form.
+    for port1 in 1..=max_ports {
+        let base = op + OP_PORTSC_BASE + 0x10 * (port1 - 1);
+        if rd32(base, 0) & PORTSC_PP == 0 { wr32(base, 0, PORTSC_PP); }
+    }
+    // Settle time is USB2.0 §7.1.7.3's power-on-to-power-good.
+    let dl = deadline_cycles(20_000);
+    while !past(dl) { core::hint::spin_loop(); }
 
     // ── Port enumeration ──────────────────────────────────────────────────────
     for port1 in 1..=max_ports {
@@ -610,20 +786,38 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
 
         let speed = ((sc >> 10) & 0xF) as u8; // 1=FS,2=LS,3=HS,4=SS,5=SSP
         crate::serial_println!("[XHCI] port {} connected, speed={}", port1, speed);
+        crate::println!(       "[XHCI] port {} connected, speed={}", port1, speed);
 
-        if !port_reset(op, port1) {
-            crate::serial_println!("[XHCI] port {} reset failed or not enabled", port1);
+        let reset_ok  = port_reset(op, port1);
+        let sc_after  = rd32(op + OP_PORTSC_BASE + 0x10 * (port1 - 1), 0);
+        if !reset_ok {
+            crate::serial_println!("[XHCI] port {} reset failed or not enabled, portsc={:#010x}", port1, sc_after);
+            crate::println!(       "[XHCI] port {} reset failed or not enabled, portsc={:#010x}", port1, sc_after);
             // Some ports still work without PED after reset (USB 3.0); try anyway.
+        } else {
+            crate::serial_println!("[XHCI] port {} reset ok, portsc={:#010x}", port1, sc_after);
+            crate::println!(       "[XHCI] port {} reset ok, portsc={:#010x}", port1, sc_after);
         }
+
+        // USB 2.0 §9.2.6.2 Reset Recovery Time (TRSTRCY): the host must wait
+        // at least 10ms after reset signaling ends before the first control
+        // transfer to the device. QEMU's emulated devices don't enforce this
+        // and respond immediately; real devices can fail the very next
+        // command (observed: Address Device cc=4 USB Transaction Error) on
+        // every Full/Low/High-Speed port without it.
+        let dl = deadline_cycles(10_000);
+        while !past(dl) { core::hint::spin_loop(); }
 
         // Enable Slot command
         cmd_push(cmd_ring, &mut cs, [0, 0, 0, TRB_ENABLE_SLOT << 10]);
         let (cc, slot) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 1_000_000);
         if cc != CC_SUCCESS || slot == 0 {
             crate::serial_println!("[XHCI] port {} Enable Slot failed cc={}", port1, cc);
+            crate::println!(       "[XHCI] port {} Enable Slot failed cc={}", port1, cc);
             continue;
         }
         crate::serial_println!("[XHCI] port {} slot={}", port1, slot);
+        crate::println!(       "[XHCI] port {} slot={}", port1, slot);
 
         // Allocate device contexts
         let out_ctx: *mut OutCtx = alloc_zeroed::<OutCtx>();
@@ -650,21 +844,99 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         // Configure input context for Address Device
         setup_addr_input_ctx(in_ctx, ep0_ring_phys, speed, port1);
 
-        // Address Device command (BSR=0 → sends SET_ADDRESS)
+        let mut ep0s = Ep0State { enq: 0, cycle: 1 };
+
+        // Address Device with BSR=1 ("Block Set address Request"): transitions
+        // the slot to Default state and lets us talk to the device at address 0
+        // WITHOUT sending SET_ADDRESS yet. No real bus transaction occurs here,
+        // so this should succeed even if our EP0 MaxPacketSize0 guess is wrong.
         cmd_push(cmd_ring, &mut cs, [
             in_ctx_phys as u32,
             (in_ctx_phys >> 32) as u32,
             0,
-            (TRB_ADDR_DEVICE << 10) | ((slot as u32) << 24),
+            (TRB_ADDR_DEVICE << 10) | (1 << 9) | ((slot as u32) << 24), // BSR=1
+        ]);
+        let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
+        crate::serial_println!("[XHCI] slot {} Address Device(BSR=1) cc={}", slot, cc);
+        crate::println!(       "[XHCI] slot {} Address Device(BSR=1) cc={}", slot, cc);
+        if cc != CC_SUCCESS {
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
+
+        // Enable Slot / Address Device(BSR=1) never touch the actual USB wire —
+        // they're xHC-internal bookkeeping. This is the first real bus
+        // transaction attempted for this device, so check the link is
+        // actually in U0 (operational) right now, not just PED=1 ("enabled"
+        // per port bookkeeping, which doesn't guarantee the link itself is
+        // ready to carry data).
+        let sc_pre = rd32(op + OP_PORTSC_BASE + 0x10 * (port1 - 1), 0);
+        let pls_pre = (sc_pre >> 5) & 0xF;
+        crate::serial_println!("[XHCI] slot {} pre-transfer portsc={:#010x} PLS={}", slot, sc_pre, pls_pre);
+        crate::println!(       "[XHCI] slot {} pre-transfer portsc={:#010x} PLS={}", slot, sc_pre, pls_pre);
+
+        // Read just the first 8 bytes of the device descriptor at address 0 —
+        // byte 7 is the device's real bMaxPacketSize0 (legitimately 8/16/32/64
+        // for Full Speed; our initial guess of 8 is always safe for this one
+        // read regardless of the real value, per spec).
+        let mps0_ok = ctrl_in(
+            ep0_ring, &mut ep0s, evt_ring, &mut es,
+            rt, evt_ring_phys, db, slot as usize,
+            [0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 8, 0],
+            desc_buf as *mut u8, 8,
+        );
+        if !mps0_ok {
+            let sc_post = rd32(op + OP_PORTSC_BASE + 0x10 * (port1 - 1), 0);
+            let pls_post = (sc_post >> 5) & 0xF;
+            crate::serial_println!("[XHCI] slot {} post-fail portsc={:#010x} PLS={}", slot, sc_post, pls_post);
+            crate::println!(       "[XHCI] slot {} post-fail portsc={:#010x} PLS={}", slot, sc_post, pls_post);
+            crate::serial_println!("[XHCI] slot {} GET_DESCRIPTOR(Device,8) at default address failed", slot);
+            crate::println!(       "[XHCI] slot {} GET_DESCRIPTOR(Device,8) at default address failed", slot);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
+        let real_mps0 = (*desc_buf)[7] as u32;
+        crate::serial_println!("[XHCI] slot {} real bMaxPacketSize0={}", slot, real_mps0);
+        crate::println!(       "[XHCI] slot {} real bMaxPacketSize0={}", slot, real_mps0);
+
+        // Evaluate Context: update only the EP0 context (A1) with the real MPS,
+        // leaving the Slot Context (A0) alone.
+        (*in_ctx).e[2][1] = (3 << 1) | (4 << 3) | (real_mps0 << 16);
+        (*in_ctx).e[0][0] = 0;
+        (*in_ctx).e[0][1] = 0b10; // A1 only
+        cmd_push(cmd_ring, &mut cs, [
+            in_ctx_phys as u32,
+            (in_ctx_phys >> 32) as u32,
+            0,
+            (TRB_EVAL_CTX << 10) | ((slot as u32) << 24),
+        ]);
+        let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
+        crate::serial_println!("[XHCI] slot {} Evaluate Context cc={}", slot, cc);
+        crate::println!(       "[XHCI] slot {} Evaluate Context cc={}", slot, cc);
+        if cc != CC_SUCCESS {
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
+
+        // Address Device again with BSR=0 — this actually sends SET_ADDRESS,
+        // now with the device's real MaxPacketSize0 in place. Address Device
+        // requires A0+A1 both set regardless of what Evaluate Context needed.
+        (*in_ctx).e[0][1] = 0b11;
+        cmd_push(cmd_ring, &mut cs, [
+            in_ctx_phys as u32,
+            (in_ctx_phys >> 32) as u32,
+            0,
+            (TRB_ADDR_DEVICE << 10) | ((slot as u32) << 24), // BSR=0
         ]);
         let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
         if cc != CC_SUCCESS {
-            crate::serial_println!("[XHCI] slot {} Address Device failed cc={}", slot, cc);
+            crate::serial_println!("[XHCI] slot {} Address Device(BSR=0) failed cc={}", slot, cc);
+            crate::println!(       "[XHCI] slot {} Address Device(BSR=0) failed cc={}", slot, cc);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         crate::serial_println!("[XHCI] slot {} addressed", slot);
-
-        let mut ep0s = Ep0State { enq: 0, cycle: 1 };
+        crate::println!(       "[XHCI] slot {} addressed", slot);
 
         // GET_DESCRIPTOR(Device, 18 bytes)
         let dev_desc_ok = ctrl_in(
@@ -675,6 +947,7 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         );
         if !dev_desc_ok {
             crate::serial_println!("[XHCI] slot {} GET_DESCRIPTOR(Device) failed", slot);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         crate::serial_println!(
@@ -692,7 +965,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
             [0x80, 0x06, 0x00, 0x02, 0x00, 0x00, 9, 0],
             desc_buf as *mut u8, 9,
         );
-        if !cfg_ok { continue; }
+        if !cfg_ok {
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
+            continue;
+        }
         let total_len = ((*desc_buf)[2] as u16) | (((*desc_buf)[3] as u16) << 8);
         let fetch_len = total_len.min(512);
 
@@ -709,6 +985,8 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         let ep_info = find_hid_kbd_ep(cfg_slice);
         if ep_info.is_none() {
             crate::serial_println!("[XHCI] slot {} not a HID boot keyboard", slot);
+            crate::println!(       "[XHCI] slot {} not a HID boot keyboard", slot);
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
         let (cfg_val, iface, ep_addr, max_pkt, ival) = ep_info.unwrap();
@@ -716,6 +994,10 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         let ep_in  = (ep_addr >> 7) & 1;
         let ep_ctx_idx = (ep_num * 2 + ep_in) as usize; // XHCI context index
         crate::serial_println!(
+            "[XHCI] HID kbd: cfg={} iface={} ep={:#04x} mps={} ival={} ctx_idx={}",
+            cfg_val, iface, ep_addr, max_pkt, ival, ep_ctx_idx
+        );
+        crate::println!(
             "[XHCI] HID kbd: cfg={} iface={} ep={:#04x} mps={} ival={} ctx_idx={}",
             cfg_val, iface, ep_addr, max_pkt, ival, ep_ctx_idx
         );
@@ -735,6 +1017,15 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
             [0x21, 0x0B, 0x00, 0x00, iface, 0, 0, 0],
         );
         if !ok { crate::serial_println!("[XHCI] SET_PROTOCOL failed (may be ok)"); }
+
+        // SET_IDLE(0, 0) — stop repeat reports when no key state changes (HID 1.11 §7.2.4)
+        // bmRequestType=0x21, bRequest=0x0A, wValue=0x0000, wIndex=iface, wLength=0
+        let ok = ctrl_out(
+            ep0_ring, &mut ep0s, evt_ring, &mut es,
+            rt, evt_ring_phys, db, slot as usize,
+            [0x21, 0x0A, 0x00, 0x00, iface, 0, 0, 0],
+        );
+        if !ok { crate::serial_println!("[XHCI] SET_IDLE failed (may be ok)"); }
 
         // Allocate interrupt endpoint ring and HID report buffer
         let int_ring: *mut IntRing = alloc_zeroed::<IntRing>();
@@ -760,8 +1051,11 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
         ]);
         let (cc, _) = wait_cmd(evt_ring, &mut es, rt, evt_ring_phys, db, 2_000_000);
         crate::serial_println!("[XHCI] Configure Endpoint cc={}", cc);
+        crate::println!(       "[XHCI] Configure Endpoint cc={}", cc);
         if cc != CC_SUCCESS {
             crate::serial_println!("[XHCI] Configure Endpoint failed");
+            crate::println!(       "[XHCI] Configure Endpoint failed");
+            disable_slot(cmd_ring, &mut cs, evt_ring, &mut es, rt, evt_ring_phys, db, slot);
             continue;
         }
 
@@ -788,12 +1082,25 @@ unsafe fn init_unsafe(cap: usize, po: usize) {
 
         KBD_READY.store(true, Ordering::Release);
         crate::serial_println!("[XHCI] keyboard ready on slot {}", slot);
+        crate::println!(       "[XHCI] keyboard ready on slot {}", slot);
         return; // found our keyboard
     }
     crate::serial_println!("[XHCI] no HID boot keyboard found");
+    crate::println!(       "[XHCI] no HID boot keyboard found");
 }
 
 // ── Polling (called from timer interrupt handler every 1 ms) ─────────────────
+
+pub fn kbd_ready() -> bool {
+    KBD_READY.load(Ordering::Acquire)
+}
+
+/// Total HID reports successfully taken so far. Diagnostic only — lets a
+/// PASSIVE_LEVEL caller (e.g. the main hlt loop) detect "first report
+/// arrived" without printing from interrupt context itself (ADR-013).
+pub fn reports_received() -> usize {
+    KBD_DBG_COUNT.load(Ordering::Relaxed)
+}
 
 pub fn take_hid_report() -> Option<[u8; 8]> {
     if !KBD_READY.load(Ordering::Acquire) { return None; }
@@ -832,6 +1139,16 @@ pub fn take_hid_report() -> Option<[u8; 8]> {
     let buf = KBD_BUF_VIRT.load(Ordering::Relaxed) as *const u8;
     let mut report = [0u8; 8];
     for i in 0..8 { report[i] = unsafe { buf.add(i).read_volatile() }; }
+
+    // Log first 16 reports to serial for driver debugging; remove once stable.
+    let n = KBD_DBG_COUNT.fetch_add(1, Ordering::Relaxed);
+    if n < 16 {
+        crate::serial_println!(
+            "[XHCI] report #{}: mod={:02x} res={:02x} keys={:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+            n, report[0], report[1],
+            report[2], report[3], report[4], report[5], report[6], report[7]
+        );
+    }
 
     // Re-arm the interrupt endpoint
     unsafe {

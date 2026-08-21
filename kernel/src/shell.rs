@@ -96,11 +96,15 @@ impl Shell {
             '\n'     => self.submit(),
             '\t'     => self.complete(),
             '\x01'   => self.cursor_to_start(),
+            '\x02'   => self.cursor_left(),
             '\x03'   => self.ctrl_c(),
             '\x05'   => self.cursor_to_end(),
+            '\x06'   => self.cursor_right(),
             '\x0c'   => self.ctrl_l(),
-            '\x17'   => self.ctrl_w(),
+            '\x0E'   => self.history_down(),
+            '\x10'   => self.history_up(),
             '\x15'   => self.ctrl_u(),
+            '\x17'   => self.ctrl_w(),
             ch       => {
                 if self.len < BUF_CAP {
                     if self.cursor_pos == self.len {
